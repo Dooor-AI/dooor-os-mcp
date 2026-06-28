@@ -1,15 +1,26 @@
-# Dooor OS MCP
+# Dooor OS MCP server
 
-Model Context Protocol (MCP) server for [Dooor OS](https://os-develop.dooor.ai). It exposes your Dooor OS workspace to any MCP-compatible AI client (Claude Code, Claude Desktop, Codex) as a set of tools: query connected data sources, inspect apps and deployments, manage agents and databases, read Harbor governance traces, and more.
+Model Context Protocol (MCP) server for the Dooor OS platform. Exposes the
+workspace's apps, deploys, git, databases, agents, monitoring and connected
+business data as MCP tools so an MCP client (Claude Code, Claude Desktop, etc.)
+can operate the platform on your behalf.
 
-Authentication is **headless and workspace-scoped**: a single workspace API key (`dor_sk_...`) carrying the scopes the key was granted. The server never holds secrets of its own; you pass the key via an environment variable.
+Every tool is scoped to a single workspace, resolved from the API key you
+provide. All `data_*` and `lake_*` tools are read-only.
 
-## Prerequisites
+## Two ways to connect
 
-- Node.js 18+
-- A Dooor OS workspace API key. Create one in the console under **Settings → API Keys**, granting only the scopes you need (for data exploration: `data-sources:read`, `data-sources:query`, `tools:execute`).
+| Mode | Transport | Where the API key comes from |
+|------|-----------|------------------------------|
+| Local (default) | stdio | `DOOOR_API_KEY` environment variable |
+| Remote (hosted) | Streamable HTTP | `X-Api-Key: dor_sk_...` header, per request |
 
-## Install
+You only need one. Most users run the local stdio server; the hosted server is
+for clients that prefer not to clone and build anything.
+
+## Local (stdio)
+
+Clone, install, build:
 
 ```bash
 git clone https://github.com/Dooor-AI/dooor-os-mcp.git
@@ -18,21 +29,8 @@ npm install
 npm run build
 ```
 
-Note the absolute path to the built entrypoint: `.../dooor-os-mcp/dist/index.js`.
-
-## Configure your AI client
-
-### Claude Code
-
-```bash
-claude mcp add dooor-os \
-  -e DOOOR_API_KEY=dor_sk_your_key_here \
-  -- node /absolute/path/to/dooor-os-mcp/dist/index.js
-```
-
-Restart Claude Code and run `/mcp`; `dooor-os` should appear.
-
-### Claude Desktop (or a project `.mcp.json`)
+Then register it with your MCP client, passing your workspace API key via the
+`DOOOR_API_KEY` environment variable. Example MCP client config:
 
 ```json
 {
@@ -48,39 +46,71 @@ Restart Claude Code and run `/mcp`; `dooor-os` should appear.
 }
 ```
 
-### Codex CLI (`~/.codex/config.toml`)
+Optional env:
 
-```toml
-[mcp_servers.dooor-os]
-command = "node"
-args    = ["/absolute/path/to/dooor-os-mcp/dist/index.js"]
-env     = { DOOOR_API_KEY = "dor_sk_your_key_here" }
+- `DOOOR_BASE_URL` - override the API base URL (default
+  `https://os-develop.dooor.ai/api/v1`).
+
+## Remote (hosted) server
+
+Instead of cloning and building, you can point your MCP client at the hosted
+Dooor OS MCP endpoint and pass your workspace API key in the `X-Api-Key`
+header. The hosted server speaks the MCP **Streamable HTTP** transport in
+stateless mode: it reads the key from each request, so your data stays scoped
+to your own workspace even though one instance serves many clients.
+
+> The key travels in `X-Api-Key` (not `Authorization`) because the hosted
+> endpoint runs behind a front end that reserves the `Authorization` header for
+> its own auth. `Authorization: Bearer dor_sk_...` is also accepted by the
+> server itself, for setups that forward that header untouched.
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http dooor-os https://mcp.dooor.ai/mcp \
+  --header "X-Api-Key: dor_sk_your_key_here"
 ```
 
-## Environment variables
+**Claude Desktop / `.mcp.json` (HTTP transport):**
 
-| Variable | Required | Description |
-|---|---|---|
-| `DOOOR_API_KEY` | yes | Your workspace API key (`dor_sk_...`). Determines which workspace and which tools you can use. |
-| `DOOOR_BASE_URL` | no | API base URL. Defaults to the managed Dooor OS. Set this for a self-hosted instance. |
+```json
+{
+  "mcpServers": {
+    "dooor-os": {
+      "type": "http",
+      "url": "https://mcp.dooor.ai/mcp",
+      "headers": {
+        "X-Api-Key": "dor_sk_your_key_here"
+      }
+    }
+  }
+}
+```
 
-The API key is workspace-scoped, so you do not need to set a workspace id.
+Replace `dor_sk_your_key_here` with your workspace API key. Requests without a
+valid key are rejected with `401`. No cloning, building or updating: you always
+get the latest tools.
 
-## Data tools
+### Running the HTTP server yourself
 
-When the key has `data-sources:read` / `data-sources:query`, the server exposes the workspace data tools, for example:
+```bash
+npm install
+npm run build
+npm run start:http
+```
 
-- `data_ask` — ask a question in natural language; an orchestrator cross-references the connected sources and answers with its steps (source, query, reason).
-- `data_sql` — read-only SQL over the connected business sources (Postgres).
-- `lake_sql` — read-only SQL over the analytical data lake (ClickHouse).
-- `data_sources` / `data_overview` — what is connected and a high-level summary.
+The server listens on `0.0.0.0:$PORT` (default `8080`):
 
-## Security
+- `POST /mcp` - one JSON-RPC request per call; key read from `X-Api-Key` (or `Authorization: Bearer`).
+- `GET /healthz` - returns `200 {"status":"ok"}` for health checks.
 
-- Grant the **minimum scopes** the key actually needs. A key for data exploration does not need write scopes (`deploy:write`, `databases:write`, `env-vars:write`, ...).
-- The key is a credential: do not commit it to a repository or share it in public channels.
-- Every request made with a key is logged on the server for governance.
+`GET`/`DELETE /mcp` return `405` because the server runs in stateless mode
+(no long-lived session or server-initiated SSE stream). A `Dockerfile` is
+included for container deploys (e.g. Cloud Run); it builds and runs
+`dist/http.js`.
 
-## License
+## Development
 
-MIT
+```bash
+npm run dev    # tsc --watch
+```
