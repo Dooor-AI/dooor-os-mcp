@@ -91,46 +91,46 @@ export class DooorApiClient {
   }
 
   // -------------------------------------------------------------------------
-  // Gauss Fleet demo (removable)
+  // Workspace data (removable demo)
   // -------------------------------------------------------------------------
 
-  gaussOverview() {
-    return this.get(this.ws("/gauss/overview"));
+  dataOverview() {
+    return this.get(this.ws("/data/overview"));
   }
-  gaussSources() {
-    return this.get(this.ws("/gauss/sources"));
+  dataSources() {
+    return this.get(this.ws("/data/sources"));
   }
-  gaussTable(key: string, limit?: number) {
+  dataTable(key: string, limit?: number) {
     const q = limit ? `?limit=${limit}` : "";
-    return this.get(this.ws(`/gauss/table/${key}${q}`));
+    return this.get(this.ws(`/data/table/${key}${q}`));
   }
-  gaussAsk(question: string) {
-    return this.post(this.ws("/gauss/ask"), { question });
+  dataAsk(question: string) {
+    return this.post(this.ws("/data/ask"), { question });
   }
-  gaussInsightsLatest() {
-    return this.get(this.ws("/gauss/insights/latest"));
+  dataInsightsLatest() {
+    return this.get(this.ws("/data/insights/latest"));
   }
 
   // -------------------------------------------------------------------------
-  // Gauss Lake (fleet telemetry data lake - ClickHouse)
+  // Data lake (telemetry data lake - ClickHouse)
   // -------------------------------------------------------------------------
 
-  gaussLakeCatalog() {
-    return this.get(this.ws("/gauss/lake/catalog"));
+  lakeCatalog() {
+    return this.get(this.ws("/data/lake/catalog"));
   }
-  gaussLakeAsk(question: string) {
-    return this.post(this.ws("/gauss/lake/ask"), { question });
+  lakeAsk(question: string) {
+    return this.post(this.ws("/data/lake/ask"), { question });
   }
-  gaussLakeQuery(spec: Record<string, unknown>) {
-    return this.post(this.ws("/gauss/lake/query"), spec);
+  lakeQuery(spec: Record<string, unknown>) {
+    return this.post(this.ws("/data/lake/query"), spec);
   }
-  gaussLakeDashboard(prompt: string) {
-    return this.post(this.ws("/gauss/lake/dashboard"), { prompt });
+  lakeDashboard(prompt: string) {
+    return this.post(this.ws("/data/lake/dashboard"), { prompt });
   }
-  gaussLakeSources() {
-    return this.get(this.ws("/gauss/lake/sources"));
+  lakeSources() {
+    return this.get(this.ws("/data/lake/sources"));
   }
-  gaussLakeBrowse(params: {
+  lakeBrowse(params: {
     layer: string;
     client?: string;
     table?: string;
@@ -143,22 +143,22 @@ export class DooorApiClient {
     if (params.table) qs.set("table", params.table);
     if (params.vehicleId) qs.set("vehicleId", params.vehicleId);
     if (params.limit != null) qs.set("limit", String(params.limit));
-    return this.get(this.ws(`/gauss/lake/browse?${qs.toString()}`));
+    return this.get(this.ws(`/data/lake/browse?${qs.toString()}`));
   }
-  gaussLakeCodeSearch(query: string, topK?: number) {
-    return this.post(this.ws("/gauss/oltp/code/search"), { query, topK });
+  lakeCodeSearch(query: string, topK?: number) {
+    return this.post(this.ws("/data/oltp/code/search"), { query, topK });
   }
-  gaussLakeSql(sql: string) {
-    return this.post(this.ws("/gauss/lake/sql"), { sql });
+  lakeSql(sql: string) {
+    return this.post(this.ws("/data/lake/sql"), { sql });
   }
-  gaussSql(sql: string) {
-    return this.post(this.ws("/gauss/sql"), { sql });
+  dataSql(sql: string) {
+    return this.post(this.ws("/data/sql"), { sql });
   }
-  gaussLakeCodeList(limit?: number, offset?: string | number) {
+  lakeCodeList(limit?: number, offset?: string | number) {
     const qs = new URLSearchParams();
     if (limit != null) qs.set("limit", String(limit));
     if (offset != null && String(offset) !== "0") qs.set("offset", String(offset));
-    return this.get(this.ws(`/gauss/oltp/code/list?${qs.toString()}`));
+    return this.get(this.ws(`/data/oltp/code/list?${qs.toString()}`));
   }
 
   // -------------------------------------------------------------------------

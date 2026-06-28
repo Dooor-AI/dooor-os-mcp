@@ -68,12 +68,12 @@ The API key is workspace-scoped, so you do not need to set a workspace id.
 
 ## Data tools
 
-When the key has `data-sources:read` / `data-sources:query`, the server exposes the workspace data tools (prefix `gauss_` for the Gauss Fleet workspace), for example:
+When the key has `data-sources:read` / `data-sources:query`, the server exposes the workspace data tools, for example:
 
-- `gauss_ask` — ask a question in natural language; an orchestrator cross-references the connected sources and answers with its steps (source, query, reason).
-- `gauss_sql` — read-only SQL over the business sources (Postgres).
-- `gauss_lake_sql` — read-only SQL over the analytical data lake (ClickHouse).
-- `gauss_sources` / `gauss_overview` — what is connected and a high-level summary.
+- `data_ask` — ask a question in natural language; an orchestrator cross-references the connected sources and answers with its steps (source, query, reason).
+- `data_sql` — read-only SQL over the connected business sources (Postgres).
+- `lake_sql` — read-only SQL over the analytical data lake (ClickHouse).
+- `data_sources` / `data_overview` — what is connected and a high-level summary.
 
 ## Security
 

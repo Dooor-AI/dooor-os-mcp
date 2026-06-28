@@ -35,19 +35,19 @@ const server = new McpServer(
   {
     instructions:
       "Dooor OS platform access for this workspace (apps, deploy, git, databases, " +
-      "agents, monitoring) AND the company's business data via the Gauss tools.\n\n" +
-      "Use the gauss_* tools whenever the user asks ANYTHING about the company's own " +
-      "operational/business data - in PT-BR or EN. Examples that should route to gauss_ask: " +
+      "agents, monitoring) AND the workspace's business data via the data_* tools.\n\n" +
+      "Use the data_* tools whenever the user asks ANYTHING about the workspace's own " +
+      "operational/business data - in PT-BR or EN. Examples that should route to data_ask: " +
       "\"quais os tecnicos da base do app instalador\", \"clientes com mais medicao virtual\", " +
-      "\"quantas intervencoes por modelo/marca\", \"total a receber no Omie\", \"incidentes no Jira\", " +
-      "\"recusas por cliente\". The data spans 4 sources: App Instalador (intervencoes de campo: " +
-      "tecnico, veiculo marca/modelo, flags de medicao virtual vs fisica, precos, vinculos Jira/Zendesk), " +
-      "Omie (financeiro), Jira (demandas) e base de clientes.\n\n" +
-      "- gauss_ask: PRIMARY tool - a natural-language business question; an orchestrator cross-references " +
+      "\"quantas intervencoes por modelo/marca\", \"total a receber no ERP\", \"incidentes no Jira\", " +
+      "\"recusas por cliente\". The data spans 4 sources: a field-service app (intervencoes de campo: " +
+      "tecnico, veiculo marca/modelo, flags de medicao virtual vs fisica, precos, vinculos de ticket), " +
+      "the connected ERP (financeiro), an issue tracker (demandas) e base de clientes.\n\n" +
+      "- data_ask: PRIMARY tool - a natural-language business question; an orchestrator cross-references " +
       "the sources and returns a grounded answer. Use this for almost any data question.\n" +
-      "- gauss_sources: list the connected sources + record counts (use to see what's available).\n" +
-      "- gauss_overview / gauss_table / gauss_insights: aggregated overview, raw row preview, proactive insights.\n" +
-      "All gauss_* tools are READ-ONLY and scoped to this workspace.",
+      "- data_sources: list the connected sources + record counts (use to see what's available).\n" +
+      "- data_overview / data_table / data_insights: aggregated overview, raw row preview, proactive insights.\n" +
+      "All data_* tools are READ-ONLY and scoped to this workspace.",
   },
 );
 
@@ -1006,86 +1006,86 @@ server.tool(
 );
 
 // ===========================================================================
-// Gauss Fleet demo (removable) - real client data over MCP
+// Workspace data (removable demo) - connected workspace data over MCP
 // ===========================================================================
 
 server.tool(
-  "gauss_overview",
-  "Get the aggregated Gauss Fleet overview: Omie financials (a receber/pagar, recebido, inadimplencia, fluxo mensal, top clientes/categorias), Jira demands (by status/type/project), client base, and installer DB schema.",
+  "data_overview",
+  "Get the aggregated workspace data overview: ERP financials (a receber/pagar, recebido, inadimplencia, fluxo mensal, top clientes/categorias), issue-tracker demands (by status/type/project), client base, and field-service DB schema.",
   {},
   async () => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussOverview()) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataOverview()) }],
   }),
 );
 
 server.tool(
-  "gauss_ask",
-  "PRIMARY data tool. Ask any natural-language business question (PT-BR or EN) about the company's own data and get a grounded answer. Use this for questions about: o APP INSTALADOR / intervencoes de campo (TECNICOS/instaladores, veiculo marca/modelo, MEDICAO virtual vs fisica - RPM/horimetro/odometro, recusas, precos, vinculos Jira/Zendesk), o financeiro do OMIE (a receber/pagar, recebido, inadimplencia), as DEMANDAS do JIRA (incidentes/status), e a base de CLIENTES. Ex.: 'quais os tecnicos da base do app instalador?', 'clientes com maior % de medicao virtual', 'intervencoes por modelo de equipamento', 'total a receber em aberto'. An orchestrator cross-references the sources deterministically and returns the answer + the per-source steps + a data table. Read-only.",
+  "data_ask",
+  "PRIMARY data tool. Ask any natural-language business question (PT-BR or EN) about the workspace's own data and get a grounded answer. Use this for questions about: o APP DE CAMPO / intervencoes de campo (TECNICOS/instaladores, veiculo marca/modelo, MEDICAO virtual vs fisica - RPM/horimetro/odometro, recusas, precos, vinculos de ticket), o financeiro do ERP (a receber/pagar, recebido, inadimplencia), as DEMANDAS do issue tracker (incidentes/status), e a base de CLIENTES. Ex.: 'quais os tecnicos da base do app de campo?', 'clientes com maior % de medicao virtual', 'intervencoes por modelo de equipamento', 'total a receber em aberto'. An orchestrator cross-references the sources deterministically and returns the answer + the per-source steps + a data table. Read-only.",
   {
     question: z.string().describe("Business question in natural language (PT-BR or EN)"),
   },
   async ({ question }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussAsk(question)) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataAsk(question)) }],
   }),
 );
 
 server.tool(
-  "gauss_table",
-  "Preview rows from one Gauss source. key = 'omie' (financial titles) | 'jira' (issues) | 'clientes' | 'installer' (field interventions: technician, vehicle brand/model, measurement flags, prices, jira/zendesk links).",
+  "data_table",
+  "Preview rows from one connected source. key = 'omie' (financial titles) | 'jira' (issues) | 'clientes' | 'installer' (field interventions: technician, vehicle brand/model, measurement flags, prices, ticket links).",
   {
     key: z.enum(["omie", "jira", "clientes", "installer"]).describe("Which source to preview"),
     limit: z.number().optional().describe("Max rows (default 25, max 100)"),
   },
   async ({ key, limit }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussTable(key, limit)) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataTable(key, limit)) }],
   }),
 );
 
 server.tool(
-  "gauss_sources",
-  "List the Gauss Fleet data sources connected for this workspace, each with its live record count and stats (Omie financeiro, Jira demandas, base de clientes, App Instalador). Use this to see what data is available before asking.",
+  "data_sources",
+  "List the data sources connected for this workspace, each with its live record count and stats (ERP financeiro, issue-tracker demandas, base de clientes, app de campo). Use this to see what data is available before asking.",
   {},
   async () => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussSources()) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
   }),
 );
 
 server.tool(
-  "gauss_insights",
-  "Get the latest proactive insight digest discovered across the Gauss Fleet sources (ranked findings with metric, value, evidence and recommended action). Read-only.",
+  "data_insights",
+  "Get the latest proactive insight digest discovered across the connected sources (ranked findings with metric, value, evidence and recommended action). Read-only.",
   {},
   async () => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussInsightsLatest()) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataInsightsLatest()) }],
   }),
 );
 
-// ── Gauss Lake (fleet telemetry data lake on ClickHouse, ~billions of rows) ──
+// ── Data lake (telemetry data lake on ClickHouse, ~billions of rows) ──
 
 server.tool(
-  "gauss_lake_ask",
-  "Ask a natural-language question (PT-BR or EN) about FLEET TELEMETRY in the Gauss data lake: vehicle utilization, idle time ('tempo ocioso' = engine on but not moving), distance, fuel, by client/vehicle/day. An agent plans a deterministic ClickHouse query grounded in the business-rule catalog, executes it over the gold marts, and returns the answer + data. Use for questions like 'qual cliente tem o maior tempo ocioso?', 'utilizacao da frota da Gerdau Ouro Branco no ultimo mes', 'consumo medio por veiculo'. Read-only.",
+  "lake_ask",
+  "Ask a natural-language question (PT-BR or EN) about FLEET TELEMETRY in the data lake: vehicle utilization, idle time ('tempo ocioso' = engine on but not moving), distance, fuel, by client/vehicle/day. An agent plans a deterministic ClickHouse query grounded in the business-rule catalog, executes it over the gold marts, and returns the answer + data. Use for questions like 'qual cliente tem o maior tempo ocioso?', 'utilizacao da frota de um cliente no ultimo mes', 'consumo medio por veiculo'. Read-only.",
   {
     question: z.string().describe("Fleet-telemetry question in natural language (PT-BR or EN)"),
   },
   async ({ question }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeAsk(question)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeAsk(question)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_dashboard",
+  "lake_dashboard",
   "Generate an INTELLIGENT DASHBOARD about fleet telemetry from a natural-language brief. An agent picks the right metrics/dimensions from the catalog, builds a multi-panel dashboard spec (kpi/line/bar/table), executes each panel over the lake, and returns the panels with data ready to render. Use when the user wants to 'criar/montar um dashboard sobre <cliente/tema>'. Read-only.",
   {
-    prompt: z.string().describe("What the dashboard should cover, e.g. 'dashboard de ociosidade e utilizacao da Gerdau Ouro Branco'"),
+    prompt: z.string().describe("What the dashboard should cover, e.g. 'dashboard de ociosidade e utilizacao de um cliente'"),
   },
   async ({ prompt }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeDashboard(prompt)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeDashboard(prompt)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_query",
-  "Run a STRUCTURED, validated aggregation over the fleet telemetry lake (no raw SQL). Provide measures + dimensions from the catalog (see gauss_lake_catalog). Every key is validated against the catalog before execution. Read-only.",
+  "lake_query",
+  "Run a STRUCTURED, validated aggregation over the fleet telemetry lake (no raw SQL). Provide measures + dimensions from the catalog (see lake_catalog). Every key is validated against the catalog before execution. Read-only.",
   {
     measures: z.array(z.string()).describe("Measure keys, e.g. ['utilization_pct','idle_pct','idle_hours']"),
     dimensions: z.array(z.string()).optional().describe("Dimension keys, e.g. ['client_name'] or ['vehicle_id']"),
@@ -1094,31 +1094,31 @@ server.tool(
     limit: z.number().optional(),
   },
   async (spec) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeQuery(spec)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeQuery(spec)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_catalog",
-  "Get the fleet-telemetry lake catalog: available clients, measures (utilization, idle, distance, fuel...), dimensions, and the business-rule glossary. Use to discover valid keys for gauss_lake_query. Read-only.",
+  "lake_catalog",
+  "Get the fleet-telemetry lake catalog: available clients, measures (utilization, idle, distance, fuel...), dimensions, and the business-rule glossary. Use to discover valid keys for lake_query. Read-only.",
   {},
   async () => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeCatalog()) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeCatalog()) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_sources",
-  "List everything the fleet data lake exposes for RAW exploration: the camadas (bronze_positions = raw GPS/CAN telemetry per vehicle, ~80 columns; bronze_other = auxiliary tables like drivers/crons; bronze_geofence = geofences; gold = vehicle_daily aggregate) and, per client (DB_MD_<n>), the real tables that exist in /data/lake. Use this to discover client ids and table names to pass to gauss_lake_browse. Read-only.",
+  "lake_sources",
+  "List everything the fleet data lake exposes for RAW exploration: the camadas (bronze_positions = raw GPS/CAN telemetry per vehicle, ~80 columns; bronze_other = auxiliary tables like drivers/crons; bronze_geofence = geofences; gold = vehicle_daily aggregate) and, per client (DB_MD_<n>), the real tables that exist in /data/lake. Use this to discover client ids and table names to pass to lake_browse. Read-only.",
   {},
   async () => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeSources()) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeSources()) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_browse",
-  "Read RAW rows straight off the lake: bronze layers query the Parquet via ClickHouse file(); gold queries gauss.vehicle_daily. Returns the real columns (with types), the rows, the exact SQL that ran and the server-side query time (queryMs). Discover valid layer/client/table via gauss_lake_sources. For bronze layers pass client=DB_MD_<n>; for bronze_other/bronze_geofence also pass table; for bronze_positions optionally pass vehicleId to focus one vehicle. Read-only, max 1000 rows.",
+  "lake_browse",
+  "Read RAW rows straight off the lake: bronze layers query the Parquet via ClickHouse file(); gold queries the vehicle_daily gold mart. Returns the real columns (with types), the rows, the exact SQL that ran and the server-side query time (queryMs). Discover valid layer/client/table via lake_sources. For bronze layers pass client=DB_MD_<n>; for bronze_other/bronze_geofence also pass table; for bronze_positions optionally pass vehicleId to focus one vehicle. Read-only, max 1000 rows.",
   {
     layer: z
       .enum(["bronze_positions", "bronze_other", "bronze_geofence", "gold"])
@@ -1129,13 +1129,13 @@ server.tool(
     limit: z.number().optional().describe("Max rows (default 50, max 1000)"),
   },
   async (p) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeBrowse(p)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeBrowse(p)) }],
   }),
 );
 
 server.tool(
-  "gauss_sql",
-  "Run AD-HOC READ-ONLY SQL over the BUSINESS data (Postgres) so you can answer ANY question yourself - lead time, DSO, conversion, cohorts, date math, joins - instead of waiting for a purpose-built metric. Relations (already filtered to this workspace, query them by these names): jira (gaussJiraIssue: key, summary, status, issueType, assignee, created, resolutionDate, customfield_10039=developer, ...), omie (gaussOmieTitulo: tipo, clienteNome, categoriaDesc, valor, status, dataEmissao, dataVencimento, dataPagamento, numeroPedido, nCodOs, ...), clientes (gaussOmieCliente), intervencoes (=installer, gaussInstallerIntervention: technicianName, clientName, brandName, vehicleModelName, type, motivManu, clientPrice, installerPrice, finishedAt, ...). It is plain PostgreSQL: camelCase columns need double quotes (e.g. \"resolutionDate\"); date math via extract(epoch from (a-b))/86400. Run 'SELECT * FROM jira LIMIT 3' first to see columns. Only ONE SELECT (no top-level WITH - use subqueries); cannot touch platform tables; capped 30s / 5000 rows. Read-only.",
+  "data_sql",
+  "Run AD-HOC READ-ONLY SQL over the BUSINESS data (Postgres) so you can answer ANY question yourself - lead time, DSO, conversion, cohorts, date math, joins - instead of waiting for a purpose-built metric. Relations (already filtered to this workspace, query them by these names): jira (issue tracker: key, summary, status, issueType, assignee, created, resolutionDate, customfield_10039=developer, ...), omie (financial titles: tipo, clienteNome, categoriaDesc, valor, status, dataEmissao, dataVencimento, dataPagamento, numeroPedido, nCodOs, ...), clientes (client base), intervencoes (=field service: technicianName, clientName, brandName, vehicleModelName, type, motivManu, clientPrice, installerPrice, finishedAt, ...). It is plain PostgreSQL: camelCase columns need double quotes (e.g. \"resolutionDate\"); date math via extract(epoch from (a-b))/86400. Run 'SELECT * FROM jira LIMIT 3' first to see columns. Only ONE SELECT (no top-level WITH - use subqueries); cannot touch platform tables; capped 30s / 5000 rows. Read-only.",
   {
     sql: z
       .string()
@@ -1144,28 +1144,28 @@ server.tool(
       ),
   },
   async ({ sql }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussSql(sql)) }],
+    content: [{ type: "text" as const, text: await call(() => api.dataSql(sql)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_sql",
-  "Run AD-HOC READ-ONLY SQL over the fleet data lake (ClickHouse) so you can write your OWN joins, window functions and custom aggregations - instead of being limited to pre-modeled metrics. Use this to compute things the structured tools cannot, e.g. availability, custom KPIs, cross-table analysis. Tables: gauss.vehicle_daily (gold mart: per vehicle/day - client_id, vehicle_id, day, total_pings, ign_on_pings, moving_pings, idle_pings, dist_km, fuel_avg, speed_max, op_seconds, first_ts, last_ts), gauss.vehicle_dim (vehicle_id -> group/model/category/client_id), gauss.client_dim (client_id -> client_name). RAW bronze telemetry (~80 cols) via the file() table function: file('<DB_MD_x>/positions/*.parquet','Parquet') - get client ids/paths from gauss_lake_sources. Only ONE read statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN); capped at 30s / 5000 rows. Tip: run DESCRIBE/SHOW first to learn columns. Read-only.",
+  "lake_sql",
+  "Run AD-HOC READ-ONLY SQL over the fleet data lake (ClickHouse) so you can write your OWN joins, window functions and custom aggregations - instead of being limited to pre-modeled metrics. Use this to compute things the structured tools cannot, e.g. availability, custom KPIs, cross-table analysis. Tables: vehicle_daily (gold mart: per vehicle/day - client_id, vehicle_id, day, total_pings, ign_on_pings, moving_pings, idle_pings, dist_km, fuel_avg, speed_max, op_seconds, first_ts, last_ts), vehicle_dim (vehicle_id -> group/model/category/client_id), client_dim (client_id -> client_name). RAW bronze telemetry (~80 cols) via the file() table function: file('<DB_MD_x>/positions/*.parquet','Parquet') - get client ids/paths from lake_sources. Only ONE read statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN); capped at 30s / 5000 rows. Tip: run DESCRIBE/SHOW first to learn columns. Read-only.",
   {
     sql: z
       .string()
       .describe(
-        "A single read-only SQL statement, e.g. \"SELECT client_id, sum(idle_pings)/sum(total_pings) idle FROM gauss.vehicle_daily GROUP BY client_id ORDER BY idle DESC\"",
+        "A single read-only SQL statement, e.g. \"SELECT client_id, sum(idle_pings)/sum(total_pings) idle FROM vehicle_daily GROUP BY client_id ORDER BY idle DESC\"",
       ),
   },
   async ({ sql }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeSql(sql)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeSql(sql)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_code_search",
-  "Semantic search (RAG over Qdrant) on the Gauss PHP business-rule SOURCE CODE. Returns the most relevant code chunks with file path, summary, snippet and a relevance score. Use to answer 'where/how is X implemented in the Gauss code' - idle/ociosidade, availability/disponibilidade, odometer/leitura de odometro, measurement and rental rules, etc. Read-only.",
+  "lake_code_search",
+  "Semantic search (RAG over Qdrant) on the indexed PHP business-rule SOURCE CODE. Returns the most relevant code chunks with file path, summary, snippet and a relevance score. Use to answer 'where/how is X implemented in the code' - idle/ociosidade, availability/disponibilidade, odometer/leitura de odometro, measurement and rental rules, etc. Read-only.",
   {
     query: z
       .string()
@@ -1173,13 +1173,13 @@ server.tool(
     topK: z.number().optional().describe("Number of code chunks to return (default 5)"),
   },
   async ({ query, topK }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeCodeSearch(query, topK)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeCodeSearch(query, topK)) }],
   }),
 );
 
 server.tool(
-  "gauss_lake_code_list",
-  "Browse the indexed Gauss code chunks page by page (no query). Returns { items, total, nextOffset }. Pass the opaque nextOffset cursor from a previous call to page forward. Use gauss_lake_code_search instead when you know what you are looking for. Read-only.",
+  "lake_code_list",
+  "Browse the indexed code chunks page by page (no query). Returns { items, total, nextOffset }. Pass the opaque nextOffset cursor from a previous call to page forward. Use lake_code_search instead when you know what you are looking for. Read-only.",
   {
     limit: z.number().optional().describe("Chunks per page (default 20, max 200)"),
     offset: z
@@ -1188,7 +1188,7 @@ server.tool(
       .describe("Opaque cursor (nextOffset) from a previous call"),
   },
   async ({ limit, offset }) => ({
-    content: [{ type: "text" as const, text: await call(() => api.gaussLakeCodeList(limit, offset)) }],
+    content: [{ type: "text" as const, text: await call(() => api.lakeCodeList(limit, offset)) }],
   }),
 );
 
