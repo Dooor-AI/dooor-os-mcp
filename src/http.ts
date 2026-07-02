@@ -16,7 +16,8 @@
  *   POST   /mcp      -> handle one JSON-RPC request (stateless)
  *   GET    /mcp      -> 405 (no server-initiated SSE stream in stateless mode)
  *   DELETE /mcp      -> 405 (no session to terminate in stateless mode)
- *   GET    /healthz  -> 200 { status: "ok" }  (Cloud Run health check)
+ *   GET    /health   -> 200 { status: "ok" }  (external health check)
+ *   GET    /healthz  -> 200 { status: "ok" }  (kept for internal compatibility)
  */
 
 import http from "node:http";
@@ -124,8 +125,9 @@ async function handleMcpPost(req: http.IncomingMessage, res: http.ServerResponse
 const httpServer = http.createServer((req, res) => {
   const path = (req.url ?? "/").split("?")[0];
 
-  // Health check for Cloud Run.
-  if (req.method === "GET" && path === "/healthz") {
+  // External health check. /healthz is kept for compatibility, but some Google
+  // front ends reserve that path before the request reaches the container.
+  if (req.method === "GET" && (path === "/health" || path === "/healthz")) {
     return sendJson(res, 200, { status: "ok" });
   }
 

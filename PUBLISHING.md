@@ -18,6 +18,9 @@ Sempre que mexer no MCP, incluindo tools novas, mudança de client ou env vars,
 atualize o repositório público. O publish não pode conter segredos: o MCP lê
 `DOOOR_API_KEY` do ambiente, nunca de código.
 
+O health check externo do servidor hospedado é `GET /health`. O endpoint
+principal MCP é `POST /mcp`.
+
 ## Como sincronizar para o público
 
 A partir desta pasta, copie os arquivos versionáveis para um clone do

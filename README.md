@@ -119,7 +119,7 @@ npm run start:http
 The server listens on `0.0.0.0:$PORT` (default `8080`):
 
 - `POST /mcp` - one JSON-RPC request per call; key read from `X-Api-Key` (or `Authorization: Bearer`).
-- `GET /healthz` - returns `200 {"status":"ok"}` for health checks.
+- `GET /health` - returns `200 {"status":"ok"}` for health checks.
 
 `GET`/`DELETE /mcp` return `405` because the server runs in stateless mode
 (no long-lived session or server-initiated SSE stream). A `Dockerfile` is
