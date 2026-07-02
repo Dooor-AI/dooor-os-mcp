@@ -25,7 +25,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { DooorApiClient } from "./api-client.js";
 import { createServer } from "./server.js";
 
-const BASE_URL = process.env.DOOOR_BASE_URL || "https://os-develop.dooor.ai/api/v1";
+const BASE_URL = process.env.DOOOR_BASE_URL || "https://os.dooor.ai/api/v1";
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = "0.0.0.0";
 
