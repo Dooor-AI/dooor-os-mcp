@@ -17,6 +17,53 @@ async function call<T>(fn: () => Promise<T>): Promise<string> {
   }
 }
 
+const TOOL_FAMILIES = [
+  {
+    family: "platform",
+    tools: [
+      "list_apps",
+      "deploy_app",
+      "list_deployments",
+      "list_databases",
+      "query_database",
+      "list_agents",
+      "list_alerts",
+      "get_workspace_overview",
+    ],
+    useFor: "Operate workspace apps, deploys, databases, agents, monitoring and git integrations.",
+    readOnly: false,
+  },
+  {
+    family: "data",
+    tools: ["data_ask", "data_sources", "data_overview", "data_table", "data_insights", "data_sql"],
+    useFor:
+      "Answer business questions over connected operational sources such as field service, finance, issues and client records.",
+    readOnly: true,
+  },
+  {
+    family: "lake",
+    tools: ["lake_ask", "lake_sources", "lake_catalog", "lake_query", "lake_browse", "lake_sql"],
+    useFor:
+      "Explore and analyze telemetry or high-volume analytical lake data through curated tools or read-only SQL.",
+    readOnly: true,
+  },
+  {
+    family: "lake_code",
+    tools: ["lake_code_search", "lake_code_list"],
+    useFor: "Search or page through indexed legacy business-rule source code.",
+    readOnly: true,
+  },
+] as const;
+
+async function probe<T>(name: string, fn: () => Promise<T>) {
+  try {
+    return { name, ok: true, data: await fn() };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { name, ok: false, error: message };
+  }
+}
+
 /**
  * Build a fresh MCP server bound to a given API client.
  *
@@ -35,20 +82,61 @@ export function createServer(api: DooorApiClient): McpServer {
     },
     {
       instructions:
-        "Dooor OS platform access for this workspace (apps, deploy, git, databases, " +
-        "agents, monitoring) AND the workspace's business data via the data_* tools.\n\n" +
-        "Use the data_* tools whenever the user asks ANYTHING about the workspace's own " +
-        "operational/business data - in PT-BR or EN. Examples that should route to data_ask: " +
-        "\"quais os tecnicos da base do app instalador\", \"clientes com mais medicao virtual\", " +
-        "\"quantas intervencoes por modelo/marca\", \"total a receber no ERP\", \"incidentes no Jira\", " +
-        "\"recusas por cliente\". The data spans 4 sources: a field-service app (intervencoes de campo: " +
-        "tecnico, veiculo marca/modelo, flags de medicao virtual vs fisica, precos, vinculos de ticket), " +
-        "the connected ERP (financeiro), an issue tracker (demandas) e base de clientes.\n\n" +
-        "- data_ask: PRIMARY tool - a natural-language business question; an orchestrator cross-references " +
-        "the sources and returns a grounded answer. Use this for almost any data question.\n" +
-        "- data_sources: list the connected sources + record counts (use to see what's available).\n" +
-        "- data_overview / data_table / data_insights: aggregated overview, raw row preview, proactive insights.\n" +
-        "All data_* tools are READ-ONLY and scoped to this workspace.",
+        "Dooor OS workspace access through MCP. Start with capabilities when a client needs to know " +
+        "which workspace, scopes, tool families and connected data sources are available.\n\n" +
+        "Tool families:\n" +
+        "* platform tools: apps, deploys, git, databases, env vars, agents and monitoring. Some mutate state.\n" +
+        "* data_* tools: read-only business data from connected operational sources. Use data_ask for " +
+        "natural-language questions such as \"quais os técnicos da base do app de campo\", " +
+        "\"clientes com mais medição virtual\", \"quantas intervenções por modelo/marca\", " +
+        "\"total a receber no ERP\", \"incidentes no tracker\" and \"recusas por cliente\".\n" +
+        "* data_sql: read-only PostgreSQL over the curated business relations for custom joins and metrics.\n" +
+        "* lake_* tools: read-only analytical lake and telemetry exploration. Use lake_sources and lake_catalog " +
+        "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
+        "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
+        "* lake_code_* tools: read-only search and browsing over indexed legacy business-rule source code.\n\n" +
+        "Use data_* for operational business questions, lake_* for telemetry or high-volume analytical data, " +
+        "lake_code_* for implementation questions, and platform tools for managing Dooor OS resources. " +
+        "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.",
+    },
+  );
+
+  server.tool(
+    "capabilities",
+    "Whoami plus a compact map of this MCP server: active workspace, API key scopes, tool families, and optional read-only probes for connected data sources. Use first when you need to know what this key can access.",
+    {
+      includeProbes: z
+        .boolean()
+        .optional()
+        .describe("Run lightweight read-only probes for data_sources and lake_sources. Default true."),
+    },
+    async ({ includeProbes = true }) => {
+      const workspace = await api.resolveWorkspace();
+      const probes = includeProbes
+        ? await Promise.all([
+            probe("data_sources", () => api.dataSources()),
+            probe("lake_sources", () => api.lakeSources()),
+          ])
+        : [];
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                server: "dooor-os",
+                version: "0.1.0",
+                workspace,
+                toolFamilies: TOOL_FAMILIES,
+                probes,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     },
   );
 
@@ -184,7 +272,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "set_app_source",
-    "Configure or replace the App's persistent source. Use type=GIT for git-connected apps, type=IMAGE for pre-built registry images. Type=UPLOAD only signals intent — actual tarballs ship via deploy_app_from_directory.",
+    "Configure or replace the App's persistent source. Use type=GIT for git-connected apps, type=IMAGE for pre-built registry images. Type=UPLOAD only signals intent; actual tarballs ship via deploy_app_from_directory.",
     {
       appId: z.string().describe("App ID"),
       type: z.enum(["GIT", "UPLOAD", "IMAGE"]).describe("Source type"),
@@ -327,7 +415,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "deploy_app_from_image",
-    "Trigger a deploy from a pre-built container image (no build step). Use when the user already published an image to a registry. The image must be pullable by the cluster — for private registries pass registryAuthRef pointing to credentials in Vault.",
+    "Trigger a deploy from a pre-built container image (no build step). Use when the user already published an image to a registry. The image must be pullable by the cluster; for private registries pass registryAuthRef pointing to credentials in Vault.",
     {
       appId: z.string().describe("App ID to deploy"),
       imageRef: z
@@ -600,7 +688,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "create_database",
-    "Provision a new managed database. POSTGRES = full Cloud Native PG cluster (separate Pod, network-accessible). SQLITE = file-based, mounted into the app pod via PVC (single-writer, RWO; the consuming app must be pinned to maxReplicas=1). REDIS = key-value store via StatefulSet. For demos and single-pod apps without scale-out needs, prefer SQLITE — it provisions instantly without Longhorn HA pressure.",
+    "Provision a new managed database. POSTGRES = full Cloud Native PG cluster (separate Pod, network-accessible). SQLITE = file-based, mounted into the app pod via PVC (single-writer, RWO; the consuming app must be pinned to maxReplicas=1). REDIS = key-value store via StatefulSet. For demos and single-pod apps without scale-out needs, prefer SQLITE because it provisions instantly without Longhorn HA pressure.",
     {
       name: z.string().describe("Database display name"),
       slug: z.string().describe("Unique slug (DNS-1123 format, e.g. my-db)"),
@@ -660,7 +748,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "detach_database",
-    "Detach a database from an app. The database itself stays provisioned and its data is preserved — only the link is removed. The next deploy will not mount the volume or inject the connection Secret.",
+    "Detach a database from an app. The database itself stays provisioned and its data is preserved; only the link is removed. The next deploy will not mount the volume or inject the connection Secret.",
     {
       dbId: z.string().describe("Database ID"),
       appId: z.string().describe("App to detach"),

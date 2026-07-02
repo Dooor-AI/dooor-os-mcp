@@ -4,6 +4,14 @@
   "description": "MCP server for Dooor OS - deploy apps, manage agents, databases and more from Claude Code",
   "type": "module",
   "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dooor-AI/dooor-os-mcp.git"
+  },
+  "homepage": "https://github.com/Dooor-AI/dooor-os-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Dooor-AI/dooor-os-mcp/issues"
+  },
   "bin": {
     "dooor-mcp": "./dist/index.js"
   },
@@ -14,14 +22,7 @@
     "start": "node dist/index.js",
     "start:http": "node dist/http.js"
   },
-  "keywords": [
-    "mcp",
-    "dooor",
-    "paas",
-    "deploy",
-    "agents",
-    "claude"
-  ],
+  "keywords": ["mcp", "dooor", "paas", "deploy", "agents", "claude"],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -30,10 +31,5 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Dooor-AI/dooor-os-mcp.git"
-  },
-  "homepage": "https://github.com/Dooor-AI/dooor-os-mcp"
+  }
 }

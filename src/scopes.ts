@@ -8,6 +8,7 @@ export const API_KEY_SCOPES = [
   "api-keys:write",
   "databases:read",
   "databases:write",
+  "databases:query",
   "deploy:read",
   "deploy:write",
   "env-vars:read",

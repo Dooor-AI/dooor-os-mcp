@@ -8,6 +8,23 @@ can operate the platform on your behalf.
 Every tool is scoped to a single workspace, resolved from the API key you
 provide. All `data_*` and `lake_*` tools are read-only.
 
+## Tool families
+
+Start with `capabilities` when connecting a new client. It returns the active
+workspace, API key scopes, tool families and optional read-only probes for the
+connected data sources.
+
+* `capabilities`: workspace whoami, scopes, family map and source probes.
+* Platform tools: apps, deploys, git repos, env vars, databases, agents and
+  monitoring.
+* `data_*`: business questions over connected operational sources such as field
+  service, finance, issues and client records. Use `data_ask` first for most
+  natural-language questions.
+* `lake_*`: telemetry or high-volume analytical data through curated tools,
+  raw browse, catalog discovery and read-only SQL.
+* `lake_code_*`: search or page through indexed legacy business-rule source
+  code.
+
 ## Two ways to connect
 
 | Mode | Transport | Where the API key comes from |

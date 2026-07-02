@@ -281,7 +281,7 @@ export class DooorApiClient {
 
   /**
    * Direct PUT to the presigned URL returned by initUpload.
-   * Bypasses Bearer auth — the URL itself authorizes the write.
+   * Bypasses Bearer auth because the URL itself authorizes the write.
    */
   async putToPresignedUrl(
     url: string,
@@ -447,6 +447,10 @@ export class DooorApiClient {
 
   getDatabaseConnection(dbId: string) {
     return this.get(this.ws(`/databases/${dbId}/connection`));
+  }
+
+  queryDatabase(dbId: string, sql: string, maxRows?: number) {
+    return this.post(this.ws(`/databases/${dbId}/query`), { sql, maxRows });
   }
 
   deleteDatabase(dbId: string) {
