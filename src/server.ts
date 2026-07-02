@@ -807,6 +807,29 @@ export function createServer(api: DooorApiClient): McpServer {
   );
 
   server.tool(
+    "query_database",
+    "Run a read-only SQL query against a managed POSTGRES database and get the rows back. Only SELECT, WITH, SHOW, DESCRIBE and EXPLAIN are allowed; writes and DDL are rejected server-side. A LIMIT is injected when absent and results are row-capped. Every call is audited. Requires the databases:query scope and the database to be RUNNING.",
+    {
+      dbId: z.string().describe("Database ID (POSTGRES engine)"),
+      sql: z
+        .string()
+        .describe("Read-only SQL. Must start with SELECT, WITH, SHOW, DESCRIBE or EXPLAIN."),
+      maxRows: z
+        .number()
+        .int()
+        .min(1)
+        .max(50000)
+        .optional()
+        .describe("Optional row cap. The server clamps this to its configured maximum."),
+    },
+    async ({ dbId, sql, maxRows }) => ({
+      content: [
+        { type: "text" as const, text: await call(() => api.queryDatabase(dbId, sql, maxRows)) },
+      ],
+    }),
+  );
+
+  server.tool(
     "delete_database",
     "Permanently delete a managed database and all its data. This cannot be undone.",
     {
