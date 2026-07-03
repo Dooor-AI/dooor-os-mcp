@@ -6,7 +6,7 @@ export class DooorApiClient {
   private workspaceId: string = "";
 
   constructor(
-    private baseUrl: string,
+    readonly baseUrl: string,
     private apiKey: string,
     workspaceId?: string,
   ) {

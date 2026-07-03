@@ -97,7 +97,19 @@ export function createServer(api: DooorApiClient): McpServer {
         "* lake_code_* tools: read-only search and browsing over indexed legacy business-rule source code.\n\n" +
         "Use data_* for operational business questions, lake_* for telemetry or high-volume analytical data, " +
         "lake_code_* for implementation questions, and platform tools for managing Dooor OS resources. " +
-        "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.",
+        "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.\n\n" +
+        "BUILDING AN APP that needs this data AT RUNTIME (not just exploring here): do NOT embed an MCP " +
+        "client in the app and do NOT call the source systems directly. The app's backend calls the same " +
+        "read-only REST API these tools wrap, base `DOOOR_BASE_URL` (e.g. https://os.dooor.ai/api/v1):\n" +
+        "* POST /workspaces/{workspaceId}/data/sql   body {\"sql\":\"select ...\"}  (one read-only SELECT)\n" +
+        "* POST /workspaces/{workspaceId}/data/ask   body {\"question\":\"...\"}    (natural-language answer)\n" +
+        "* GET  /workspaces/{workspaceId}/data/overview | /data/sources | /data/table/{key}\n" +
+        "* /workspaces/{workspaceId}/data/lake/* for the analytical lake.\n" +
+        "Auth with header `Authorization: Bearer <DOOOR_API_KEY>` (a dor_sk_ workspace key). Set " +
+        "DOOOR_API_KEY and DOOOR_BASE_URL as ENV VARS in the app, never hardcode; resolve workspaceId once " +
+        "via GET /api-keys/whoami. Everything is read-only and scoped to the key's workspace. In short: " +
+        "MCP tools = dev-time exploration; the REST API = the running app. Call the integration_guide tool " +
+        "for a copy-pasteable code example.",
     },
   );
 
@@ -137,6 +149,72 @@ export function createServer(api: DooorApiClient): McpServer {
           },
         ],
       };
+    },
+  );
+
+  server.tool(
+    "integration_guide",
+    "How to consume this workspace's data FROM YOUR APP'S CODE at runtime (not via MCP). Returns a copy-pasteable example: the REST endpoints, auth header, required env vars, and a TypeScript client. Call this when building an app that needs workspace data in production.",
+    {},
+    async () => {
+      const base = api.baseUrl ?? "https://os.dooor.ai/api/v1";
+      const guide = [
+        "# Consuming Dooor data from your app (runtime)",
+        "",
+        "The MCP tools here are for DEV-TIME exploration. Your running app must NOT embed an MCP client",
+        "and must NOT call the source systems directly. It calls the same read-only REST API these tools wrap.",
+        "",
+        "## Env vars (set in the app; never hardcode)",
+        "- DOOOR_API_KEY=dor_sk_...   (a workspace API key with scope data-sources:read)",
+        `- DOOOR_BASE_URL=${base}`,
+        "",
+        "## Endpoints (all read-only, workspace-scoped)",
+        "- POST {base}/workspaces/{ws}/data/sql   body { sql }        -> one read-only SELECT over curated relations",
+        "- POST {base}/workspaces/{ws}/data/ask   body { question }   -> natural-language grounded answer",
+        "- GET  {base}/workspaces/{ws}/data/overview | /data/sources | /data/table/{key}",
+        "- {base}/workspaces/{ws}/data/lake/*      -> analytical lake (lake/sql, lake/ask, ...)",
+        "- GET  {base}/api-keys/whoami            -> resolve the workspaceId from the key once at boot",
+        "",
+        "## Auth",
+        "Header: Authorization: Bearer <DOOOR_API_KEY>",
+        "",
+        "## TypeScript client (drop into your backend)",
+        "```ts",
+        "const BASE = process.env.DOOOR_BASE_URL!;",
+        "const KEY = process.env.DOOOR_API_KEY!;",
+        "const H = { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };",
+        "",
+        "let wsId: string | undefined;",
+        "async function workspaceId() {",
+        "  if (wsId) return wsId;",
+        "  const r = await fetch(`${BASE}/api-keys/whoami`, { headers: H });",
+        "  wsId = (await r.json()).workspaceId;",
+        "  return wsId!;",
+        "}",
+        "",
+        "export async function dooorSql(sql: string) {",
+        "  const ws = await workspaceId();",
+        "  const r = await fetch(`${BASE}/workspaces/${ws}/data/sql`, {",
+        "    method: 'POST', headers: H, body: JSON.stringify({ sql }),",
+        "  });",
+        "  if (!r.ok) throw new Error(`dooor sql ${r.status}: ${await r.text()}`);",
+        "  return r.json();",
+        "}",
+        "",
+        "export async function dooorAsk(question: string) {",
+        "  const ws = await workspaceId();",
+        "  const r = await fetch(`${BASE}/workspaces/${ws}/data/ask`, {",
+        "    method: 'POST', headers: H, body: JSON.stringify({ question }),",
+        "  });",
+        "  if (!r.ok) throw new Error(`dooor ask ${r.status}: ${await r.text()}`);",
+        "  return r.json();",
+        "}",
+        "```",
+        "",
+        "Read-only always: never attempt writes to the source systems through Dooor.",
+        "Cache results in your own database if you need snapshots (e.g. daily).",
+      ].join("\n");
+      return { content: [{ type: "text" as const, text: guide }] };
     },
   );
 
