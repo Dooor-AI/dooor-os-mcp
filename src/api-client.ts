@@ -91,9 +91,12 @@ export class DooorApiClient {
   }
 
   // -------------------------------------------------------------------------
-  // Workspace data (removable demo)
+  // Workspace data products
   // -------------------------------------------------------------------------
 
+  dataProducts() {
+    return this.get(this.ws("/data-products"));
+  }
   dataOverview() {
     return this.get(this.ws("/data/overview"));
   }

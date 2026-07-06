@@ -17,6 +17,8 @@ connected data sources.
 * `capabilities`: workspace whoami, scopes, family map and source probes.
 * Platform tools: apps, deploys, git repos, env vars, databases, agents and
   monitoring.
+* `data_products`: discover which data products and capabilities are enabled
+  for the active workspace.
 * `data_*`: business questions over connected operational sources such as field
   service, finance, issues and client records. Use `data_ask` first for most
   natural-language questions.

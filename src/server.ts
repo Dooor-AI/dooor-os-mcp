@@ -35,7 +35,15 @@ const TOOL_FAMILIES = [
   },
   {
     family: "data",
-    tools: ["data_ask", "data_sources", "data_overview", "data_table", "data_insights", "data_sql"],
+    tools: [
+      "data_products",
+      "data_ask",
+      "data_sources",
+      "data_overview",
+      "data_table",
+      "data_insights",
+      "data_sql",
+    ],
     useFor:
       "Answer business questions over connected operational sources such as field service, finance, issues and client records.",
     readOnly: true,
@@ -86,6 +94,7 @@ export function createServer(api: DooorApiClient): McpServer {
         "which workspace, scopes, tool families and connected data sources are available.\n\n" +
         "Tool families:\n" +
         "* platform tools: apps, deploys, git, databases, env vars, agents and monitoring. Some mutate state.\n" +
+        "* data_products: discover which productized data experiences are enabled in this workspace.\n" +
         "* data_* tools: read-only business data from connected operational sources. Use data_ask for " +
         "natural-language questions such as \"quais os técnicos da base do app de campo\", " +
         "\"clientes com mais medição virtual\", \"quantas intervenções por modelo/marca\", " +
@@ -103,6 +112,7 @@ export function createServer(api: DooorApiClient): McpServer {
         "read-only REST API these tools wrap, base `DOOOR_BASE_URL` (e.g. https://os.dooor.ai/api/v1):\n" +
         "* POST /workspaces/{workspaceId}/data/sql   body {\"sql\":\"select ...\"}  (one read-only SELECT)\n" +
         "* POST /workspaces/{workspaceId}/data/ask   body {\"question\":\"...\"}    (natural-language answer)\n" +
+        "* GET  /workspaces/{workspaceId}/data-products\n" +
         "* GET  /workspaces/{workspaceId}/data/overview | /data/sources | /data/table/{key}\n" +
         "* /workspaces/{workspaceId}/data/lake/* for the analytical lake.\n" +
         "Auth with header `Authorization: Bearer <DOOOR_API_KEY>` (a dor_sk_ workspace key). Set " +
@@ -126,6 +136,7 @@ export function createServer(api: DooorApiClient): McpServer {
       const workspace = await api.resolveWorkspace();
       const probes = includeProbes
         ? await Promise.all([
+            probe("data_products", () => api.dataProducts()),
             probe("data_sources", () => api.dataSources()),
             probe("lake_sources", () => api.lakeSources()),
           ])
@@ -169,6 +180,7 @@ export function createServer(api: DooorApiClient): McpServer {
         `- DOOOR_BASE_URL=${base}`,
         "",
         "## Endpoints (all read-only, workspace-scoped)",
+        "- GET  {base}/workspaces/{ws}/data-products                  -> enabled data products and capabilities",
         "- POST {base}/workspaces/{ws}/data/sql   body { sql }        -> one read-only SELECT over curated relations",
         "- POST {base}/workspaces/{ws}/data/ask   body { question }   -> natural-language grounded answer",
         "- GET  {base}/workspaces/{ws}/data/overview | /data/sources | /data/table/{key}",
@@ -1185,8 +1197,17 @@ export function createServer(api: DooorApiClient): McpServer {
   );
 
   // ===========================================================================
-  // Workspace data (removable demo) - connected workspace data over MCP
+  // Workspace data products and connected workspace data over MCP
   // ===========================================================================
+
+  server.tool(
+    "data_products",
+    "List the productized data experiences enabled in this workspace, including capabilities, REST paths, MCP tools and backing stores. Use this before choosing data_* or lake_* tools for a new workspace.",
+    {},
+    async () => ({
+      content: [{ type: "text" as const, text: await call(() => api.dataProducts()) }],
+    }),
+  );
 
   server.tool(
     "data_overview",
