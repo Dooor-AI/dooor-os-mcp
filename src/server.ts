@@ -385,11 +385,11 @@ export function createServer(api: DooorApiClient): McpServer {
         .optional()
         .describe("IMAGE: Vault path with registry credentials (private images)"),
     },
-    async (params) => ({
+    async ({ appId, ...data }) => ({
       content: [
         {
           type: "text" as const,
-          text: await call(() => api.setAppSource(params.appId, params)),
+          text: await call(() => api.setAppSource(appId, data)),
         },
       ],
     }),
