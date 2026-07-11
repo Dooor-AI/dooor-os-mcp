@@ -9,6 +9,9 @@ export const API_KEY_SCOPES = [
   "databases:read",
   "databases:write",
   "databases:query",
+  "data-sources:read",
+  "data-sources:write",
+  "data-sources:query",
   "deploy:read",
   "deploy:write",
   "env-vars:read",
@@ -19,6 +22,11 @@ export const API_KEY_SCOPES = [
   "harbor:write",
   "monitoring:read",
   "monitoring:write",
+  "tools:read",
+  "tools:write",
+  "tools:execute",
+  "sandbox:read",
+  "sandbox:execute",
 ] as const;
 
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
