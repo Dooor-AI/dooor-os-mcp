@@ -103,6 +103,30 @@ export class DooorApiClient {
   dataSources() {
     return this.get(this.ws("/data/sources"));
   }
+  dataConnections() {
+    return this.get(this.ws("/data-sources"));
+  }
+  dataConnectionCapabilities(sourceId: string) {
+    return this.get(
+      this.ws(`/data-sources/${encodeURIComponent(sourceId)}/capabilities`),
+    );
+  }
+  dataConnectionRead(
+    sourceId: string,
+    params: {
+      entity: string;
+      operation: "list" | "get";
+      id?: string;
+      filter?: Record<string, unknown>;
+      cursor?: string;
+      maxRows?: number;
+    },
+  ) {
+    return this.post(
+      this.ws(`/data-sources/${encodeURIComponent(sourceId)}/operation`),
+      params,
+    );
+  }
   dataTable(key: string, limit?: number) {
     const q = limit ? `?limit=${limit}` : "";
     return this.get(this.ws(`/data/table/${key}${q}`));
@@ -569,8 +593,18 @@ export class DooorApiClient {
     return this.get(this.ws("/api-keys"));
   }
 
-  createApiKey(name: string, scopes: string[], expiresAt?: string) {
-    return this.post(this.ws("/api-keys"), { name, scopes, expiresAt });
+  createApiKey(
+    name: string,
+    scopes: string[],
+    expiresAt?: string,
+    dataSourceIds?: string[],
+  ) {
+    return this.post(this.ws("/api-keys"), {
+      name,
+      scopes,
+      expiresAt,
+      dataSourceIds,
+    });
   }
 
   revokeApiKey(keyId: string) {

@@ -22,6 +22,9 @@ connected data sources.
 * `data_*`: business questions over connected operational sources such as field
   service, finance, issues and client records. Use `data_ask` first for most
   natural-language questions.
+* `data_connections`, `data_connection_capabilities` and
+  `data_connection_read`: discover and read allowlisted entities from live
+  operational connections through the Dooor read-only proxy.
 * `lake_*`: telemetry or high-volume analytical data through curated tools,
   raw browse, catalog discovery and read-only SQL.
 * `lake_code_*`: search or page through indexed legacy business-rule source
@@ -68,7 +71,7 @@ Then register it with your MCP client, passing your workspace API key via the
 Optional env:
 
 - `DOOOR_BASE_URL` - override the API base URL (default
-  `https://os-develop.dooor.ai/api/v1`).
+  `https://os.dooor.ai/api/v1`).
 
 ## Remote (hosted) server
 
@@ -127,6 +130,30 @@ The server listens on `0.0.0.0:$PORT` (default `8080`):
 (no long-lived session or server-initiated SSE stream). A `Dockerfile` is
 included for container deploys (e.g. Cloud Run); it builds and runs
 `dist/http.js`.
+
+## Building an app with connected data
+
+Use MCP while developing to discover what the workspace exposes. A running app
+does not embed an MCP client and does not call connected systems directly. Its
+backend calls the Dooor REST API with `Authorization: Bearer <DOOOR_API_KEY>`.
+
+For replicated or curated data, use `/data/*` and `/data/lake/*`. For a live
+operational connection, use this sequence:
+
+1. `GET /workspaces/{ws}/data-sources`
+2. `GET /workspaces/{ws}/data-sources/{sourceId}/capabilities`
+3. `POST /workspaces/{ws}/data-sources/{sourceId}/operation`
+
+The operation body contains an advertised `entity`, `operation` (`list` or
+`get`) and optional `id`, `filter`, `cursor` and `maxRows`. Dooor keeps source
+credentials in its secret store, enforces configured fixed filters and returns
+only allowlisted read data.
+
+Create a dedicated key for each deployed app with only
+`data-sources:read` and `data-sources:query`, restricted to the required
+`dataSourceIds`. Store it only in the app backend's environment. Never reuse a
+person's MCP key or expose the key to browser code. Call `integration_guide` for
+a complete TypeScript client.
 
 ## Development
 

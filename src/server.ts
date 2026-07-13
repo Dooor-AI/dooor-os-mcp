@@ -49,6 +49,17 @@ const TOOL_FAMILIES = [
     readOnly: true,
   },
   {
+    family: "live_data_connections",
+    tools: [
+      "data_connections",
+      "data_connection_capabilities",
+      "data_connection_read",
+    ],
+    useFor:
+      "Discover and read allowlisted entities directly from connected operational systems through the Dooor read-only proxy.",
+    readOnly: true,
+  },
+  {
     family: "lake",
     tools: ["lake_ask", "lake_sources", "lake_catalog", "lake_query", "lake_browse", "lake_sql"],
     useFor:
@@ -100,6 +111,9 @@ export function createServer(api: DooorApiClient): McpServer {
         "\"clientes com mais medição virtual\", \"quantas intervenções por modelo/marca\", " +
         "\"total a receber no ERP\", \"incidentes no tracker\" and \"recusas por cliente\".\n" +
         "* data_sql: read-only PostgreSQL over the curated business relations for custom joins and metrics.\n" +
+        "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
+        "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
+        "keeps configured source filters authoritative and never returns credentials.\n" +
         "* lake_* tools: read-only analytical lake and telemetry exploration. Use lake_sources and lake_catalog " +
         "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
         "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
@@ -113,11 +127,17 @@ export function createServer(api: DooorApiClient): McpServer {
         "* POST /workspaces/{workspaceId}/data/sql   body {\"sql\":\"select ...\"}  (one read-only SELECT)\n" +
         "* POST /workspaces/{workspaceId}/data/ask   body {\"question\":\"...\"}    (natural-language answer)\n" +
         "* GET  /workspaces/{workspaceId}/data-products\n" +
+        "* GET  /workspaces/{workspaceId}/data-sources\n" +
+        "* GET  /workspaces/{workspaceId}/data-sources/{sourceId}/capabilities\n" +
+        "* POST /workspaces/{workspaceId}/data-sources/{sourceId}/operation body " +
+        "{\"entity\":\"...\",\"operation\":\"list|get\",\"id\":\"optional\",\"filter\":{},\"cursor\":\"optional\",\"maxRows\":100}\n" +
         "* GET  /workspaces/{workspaceId}/data/overview | /data/sources | /data/table/{key}\n" +
         "* /workspaces/{workspaceId}/data/lake/* for the analytical lake.\n" +
         "Auth with header `Authorization: Bearer <DOOOR_API_KEY>` (a dor_sk_ workspace key). Set " +
-        "DOOOR_API_KEY and DOOOR_BASE_URL as ENV VARS in the app, never hardcode; resolve workspaceId once " +
-        "via GET /api-keys/whoami. Everything is read-only and scoped to the key's workspace. In short: " +
+        "DOOOR_API_KEY and DOOOR_BASE_URL as server-side ENV VARS in the app, never hardcode or expose them " +
+        "to browser code; resolve workspaceId once via GET /api-keys/whoami. A deployed app needs its own key " +
+        "with only data-sources:read and data-sources:query, restricted to the required dataSourceIds. Never " +
+        "reuse a person's MCP key. Everything is read-only and scoped to the key's workspace and source allowlist. In short: " +
         "MCP tools = dev-time exploration; the REST API = the running app. Call the integration_guide tool " +
         "for a copy-pasteable code example.",
     },
@@ -138,6 +158,7 @@ export function createServer(api: DooorApiClient): McpServer {
         ? await Promise.all([
             probe("data_products", () => api.dataProducts()),
             probe("data_sources", () => api.dataSources()),
+            probe("data_connections", () => api.dataConnections()),
             probe("lake_sources", () => api.lakeSources()),
           ])
         : [];
@@ -176,14 +197,18 @@ export function createServer(api: DooorApiClient): McpServer {
         "and must NOT call the source systems directly. It calls the same read-only REST API these tools wrap.",
         "",
         "## Env vars (set in the app; never hardcode)",
-        "- DOOOR_API_KEY=dor_sk_...   (a workspace API key with scope data-sources:read)",
+        "- DOOOR_API_KEY=dor_sk_...   (a dedicated app key with only data-sources:read and data-sources:query)",
         `- DOOOR_BASE_URL=${base}`,
+        "Keep both variables on the backend only. Never expose the key in browser code.",
         "",
         "## Endpoints (all read-only, workspace-scoped)",
         "- GET  {base}/workspaces/{ws}/data-products                  -> enabled data products and capabilities",
         "- POST {base}/workspaces/{ws}/data/sql   body { sql }        -> one read-only SELECT over curated relations",
         "- POST {base}/workspaces/{ws}/data/ask   body { question }   -> natural-language grounded answer",
         "- GET  {base}/workspaces/{ws}/data/overview | /data/sources | /data/table/{key}",
+        "- GET  {base}/workspaces/{ws}/data-sources                    -> live connection IDs/types/status",
+        "- GET  {base}/workspaces/{ws}/data-sources/{sourceId}/capabilities -> entities, list/get operations and fields",
+        "- POST {base}/workspaces/{ws}/data-sources/{sourceId}/operation    -> read a live source through Dooor",
         "- {base}/workspaces/{ws}/data/lake/*      -> analytical lake (lake/sql, lake/ask, ...)",
         "- GET  {base}/api-keys/whoami            -> resolve the workspaceId from the key once at boot",
         "",
@@ -221,9 +246,40 @@ export function createServer(api: DooorApiClient): McpServer {
         "  if (!r.ok) throw new Error(`dooor ask ${r.status}: ${await r.text()}`);",
         "  return r.json();",
         "}",
+        "",
+        "export async function dooorConnections() {",
+        "  const ws = await workspaceId();",
+        "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources`, { headers: H });",
+        "  if (!r.ok) throw new Error(`dooor connections ${r.status}: ${await r.text()}`);",
+        "  return r.json();",
+        "}",
+        "",
+        "export async function dooorConnectionCapabilities(sourceId: string) {",
+        "  const ws = await workspaceId();",
+        "  const id = encodeURIComponent(sourceId);",
+        "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources/${id}/capabilities`, { headers: H });",
+        "  if (!r.ok) throw new Error(`dooor capabilities ${r.status}: ${await r.text()}`);",
+        "  return r.json();",
+        "}",
+        "",
+        "export async function dooorConnectionRead(sourceId: string, input: {",
+        "  entity: string; operation: 'list' | 'get'; id?: string;",
+        "  filter?: Record<string, unknown>; cursor?: string; maxRows?: number;",
+        "}) {",
+        "  const ws = await workspaceId();",
+        "  const id = encodeURIComponent(sourceId);",
+        "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources/${id}/operation`, {",
+        "    method: 'POST', headers: H, body: JSON.stringify(input),",
+        "  });",
+        "  if (!r.ok) throw new Error(`dooor connection read ${r.status}: ${await r.text()}`);",
+        "  return r.json();",
+        "}",
         "```",
         "",
-        "Read-only always: never attempt writes to the source systems through Dooor.",
+        "For live reads, list connections, inspect capabilities, then call only an advertised list/get operation.",
+        "Configured fixed filters are enforced by Dooor and cannot be overridden by the app.",
+        "Create a separate runtime key restricted to only the required dataSourceIds. Never reuse a person's MCP key.",
+        "Read-only always: never attempt writes to the source systems through Dooor and never call them directly.",
         "Cache results in your own database if you need snapshots (e.g. daily).",
       ].join("\n");
       return { content: [{ type: "text" as const, text: guide }] };
@@ -1174,12 +1230,20 @@ export function createServer(api: DooorApiClient): McpServer {
           `Granted scopes. Recommended for a deploy automation agent: ${MCP_DEPLOY_AUTOMATION_SCOPES.join(", ")}`,
         ),
       expiresAt: z.string().optional().describe("Expiration date (ISO 8601). Omit for no expiry."),
+      dataSourceIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Optional source allowlist. For a runtime data app, pass only the connection IDs the app needs.",
+        ),
     },
-    async ({ name, scopes, expiresAt }) => ({
+    async ({ name, scopes, expiresAt, dataSourceIds }) => ({
       content: [
         {
           type: "text" as const,
-          text: await call(() => api.createApiKey(name, scopes, expiresAt)),
+          text: await call(() =>
+            api.createApiKey(name, scopes, expiresAt, dataSourceIds),
+          ),
         },
       ],
     }),
@@ -1199,6 +1263,71 @@ export function createServer(api: DooorApiClient): McpServer {
   // ===========================================================================
   // Workspace data products and connected workspace data over MCP
   // ===========================================================================
+
+  server.tool(
+    "data_connections",
+    "List the live operational data connections visible to this key. Returns neutral connection IDs, names, types and status without credentials. Use the selected sourceId with data_connection_capabilities before reading it.",
+    {},
+    async () => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.dataConnections()),
+        },
+      ],
+    }),
+  );
+
+  server.tool(
+    "data_connection_capabilities",
+    "Discover the allowlisted read-only entities, list/get operations, typed fields, pagination contract and fixed filter keys for one live connection. Fixed filters are enforced by Dooor and cannot be overridden by the caller.",
+    {
+      sourceId: z.string().describe("Connection ID returned by data_connections"),
+    },
+    async ({ sourceId }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.dataConnectionCapabilities(sourceId)),
+        },
+      ],
+    }),
+  );
+
+  server.tool(
+    "data_connection_read",
+    "Execute one allowlisted read-only list/get operation through Dooor. Call data_connection_capabilities first and use exactly one entity and operation it returns. This tool never exposes source credentials and never performs source writes.",
+    {
+      sourceId: z.string().describe("Connection ID returned by data_connections"),
+      entity: z
+        .string()
+        .describe("Entity key returned by data_connection_capabilities"),
+      operation: z.enum(["list", "get"]),
+      id: z
+        .string()
+        .optional()
+        .describe("Record identifier, required when the selected get operation needs one"),
+      filter: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Optional provider-neutral read filter. Server-side fixed filters always win."),
+      cursor: z.string().optional().describe("Opaque nextCursor from the previous response"),
+      maxRows: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum rows for this response, subject to the server cap"),
+    },
+    async ({ sourceId, ...params }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.dataConnectionRead(sourceId, params)),
+        },
+      ],
+    }),
+  );
 
   server.tool(
     "data_products",
