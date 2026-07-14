@@ -71,7 +71,7 @@ Then register it with your MCP client, passing your workspace API key via the
 Optional env:
 
 - `DOOOR_BASE_URL` - override the API base URL (default
-  `https://os.dooor.ai/api/v1`).
+  `https://api.os.dooor.ai/v1`).
 
 ## Remote (hosted) server
 

@@ -132,7 +132,7 @@ export function createServer(api: DooorApiClient): McpServer {
         "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.\n\n" +
         "BUILDING AN APP that needs this data AT RUNTIME (not just exploring here): do NOT embed an MCP " +
         "client in the app and do NOT call the source systems directly. The app's backend calls the same " +
-        "read-only REST API these tools wrap, base `DOOOR_BASE_URL` (e.g. https://os.dooor.ai/api/v1):\n" +
+        "read-only REST API these tools wrap, base `DOOOR_BASE_URL` (e.g. https://api.os.dooor.ai/v1):\n" +
         "* POST /workspaces/{workspaceId}/data/sql   body {\"sql\":\"select ...\"}  (one read-only SELECT)\n" +
         "* POST /workspaces/{workspaceId}/data/ask   body {\"question\":\"...\"}    (natural-language answer)\n" +
         "* GET  /workspaces/{workspaceId}/data-products\n" +
@@ -198,7 +198,7 @@ export function createServer(api: DooorApiClient): McpServer {
     "How to consume this workspace's data FROM YOUR APP'S CODE at runtime (not via MCP). Returns a copy-pasteable example: the REST endpoints, auth header, required env vars, and a TypeScript client. Call this when building an app that needs workspace data in production.",
     {},
     async () => {
-      const base = api.baseUrl ?? "https://os.dooor.ai/api/v1";
+      const base = api.baseUrl ?? "https://api.os.dooor.ai/v1";
       const guide = [
         "# Consuming Dooor data from your app (runtime)",
         "",
