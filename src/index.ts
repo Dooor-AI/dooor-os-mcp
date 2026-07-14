@@ -5,7 +5,7 @@ import { DooorApiClient } from "./api-client.js";
 import { createServer } from "./server.js";
 
 const DOOOR_API_KEY = process.env.DOOOR_API_KEY;
-const DOOOR_BASE_URL = process.env.DOOOR_BASE_URL || "https://os.dooor.ai/api/v1";
+const DOOOR_BASE_URL = process.env.DOOOR_BASE_URL || "https://api.os.dooor.ai/v1";
 
 if (!DOOOR_API_KEY) {
   console.error("Missing DOOOR_API_KEY environment variable");
