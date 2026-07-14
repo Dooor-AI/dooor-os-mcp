@@ -149,6 +149,12 @@ The operation body contains an advertised `entity`, `operation` (`list` or
 credentials in its secret store, enforces configured fixed filters and returns
 only allowlisted read data.
 
+For Omie cash flow, the title entities may not contain the actual settlement
+date. Read `movimento_financeiro`, use `data_pagamento` as the cash date and
+join `codigo_titulo` to `titulo_receber.codigo_lancamento_omie` or
+`titulo_pagar.codigo_lancamento_omie`. `natureza` is `R` for receivables and
+`P` for payables.
+
 Create a dedicated key for each deployed app with only
 `data-sources:read` and `data-sources:query`, restricted to the required
 `dataSourceIds`. Store it only in the app backend's environment. Never reuse a
