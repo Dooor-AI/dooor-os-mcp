@@ -113,7 +113,9 @@ export function createServer(api: DooorApiClient): McpServer {
         "* data_sql: read-only PostgreSQL over the curated business relations for custom joins and metrics.\n" +
         "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
         "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
-        "keeps configured source filters authoritative and never returns credentials.\n" +
+        "keeps configured source filters authoritative and never returns credentials. The REST operation response " +
+        "is an envelope whose data array is `records`, with rowCount, truncated, nextCursor, columns, queryId and durationMs. " +
+        "Read `response.records`; never assume a top-level array or `items`/`data`/`results`.\n" +
         "  Omie finance: choose the entity that represents the requested business value. " +
         "movimento_financeiro provides actual settlements: use data_pagamento as the cash date, join " +
         "codigo_titulo to the title's codigo_lancamento_omie, and interpret natureza R as receivable and P as payable. " +
@@ -274,14 +276,16 @@ export function createServer(api: DooorApiClient): McpServer {
         "export async function dooorConnectionRead(sourceId: string, input: {",
         "  entity: string; operation: 'list' | 'get'; id?: string;",
         "  filter?: Record<string, unknown>; cursor?: string; maxRows?: number;",
-        "}) {",
+        "}): Promise<{ records: Record<string, unknown>[]; rowCount: number; truncated: boolean; nextCursor?: string }> {",
         "  const ws = await workspaceId();",
         "  const id = encodeURIComponent(sourceId);",
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources/${id}/operation`, {",
         "    method: 'POST', headers: H, body: JSON.stringify(input),",
         "  });",
         "  if (!r.ok) throw new Error(`dooor connection read ${r.status}: ${await r.text()}`);",
-        "  return r.json();",
+        "  const result = await r.json();",
+        "  if (!Array.isArray(result.records)) throw new Error('dooor connection read response is missing records');",
+        "  return result;",
         "}",
         "```",
         "",
@@ -297,6 +301,11 @@ export function createServer(api: DooorApiClient): McpServer {
         "",
         "## Omie live-read examples",
         "```ts",
+        "const settlements = await dooorConnectionRead(sourceId, {",
+        "  entity: 'movimento_financeiro', operation: 'list', maxRows: 100,",
+        "});",
+        "const cashRows = settlements.records; // data_pagamento, valor_pago, codigo_titulo, natureza",
+        "",
         "const statement = await dooorConnectionRead(sourceId, {",
         "  entity: 'extrato_conta_corrente', operation: 'list',",
         "  filter: { nCodCC: 123456789, dPeriodoInicial: '01/07/2026', dPeriodoFinal: '31/07/2026' },",
@@ -308,6 +317,7 @@ export function createServer(api: DooorApiClient): McpServer {
         "  filter: { nAno: 2026, nMes: 7 },",
         "  maxRows: 100,",
         "});",
+        "const budgetRows = budget.records;",
         "```",
         "Create a separate runtime key restricted to only the required dataSourceIds. Never reuse a person's MCP key.",
         "Read-only always: never attempt writes to the source systems through Dooor and never call them directly.",
@@ -1327,7 +1337,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_connection_read",
-    "Execute one allowlisted read-only list/get operation through Dooor. Call data_connection_capabilities first and use exactly one entity and operation it returns. This tool never exposes source credentials and never performs source writes.",
+    "Execute one allowlisted read-only list/get operation through Dooor. Call data_connection_capabilities first and use exactly one entity and operation it returns. The REST equivalent returns an envelope whose row array is `records`, plus rowCount, truncated, nextCursor, columns, queryId and durationMs. Runtime apps must read response.records, not a top-level array or items/data/results. This tool never exposes source credentials and never performs source writes.",
     {
       sourceId: z.string().describe("Connection ID returned by data_connections"),
       entity: z
