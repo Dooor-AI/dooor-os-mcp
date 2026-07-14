@@ -147,7 +147,10 @@ operational connection, use this sequence:
 The operation body contains an advertised `entity`, `operation` (`list` or
 `get`) and optional `id`, `filter`, `cursor` and `maxRows`. Dooor keeps source
 credentials in its secret store, enforces configured fixed filters and returns
-only allowlisted read data.
+only allowlisted read data. The response is an envelope with `records` as the
+data array, plus `rowCount`, `truncated`, optional `nextCursor`, `columns`,
+`queryId` and `durationMs`. Read rows from `response.records`; do not assume the
+top-level response is an array or use `items`, `data` or `results`.
 
 ### Omie finance entities
 
