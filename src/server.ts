@@ -114,9 +114,15 @@ export function createServer(api: DooorApiClient): McpServer {
         "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
         "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
         "keeps configured source filters authoritative and never returns credentials.\n" +
-        "  For Omie cash flow, title entities may not carry the actual settlement date. Read " +
-        "movimento_financeiro, use data_pagamento as the cash date, and join codigo_titulo to the title's " +
-        "codigo_lancamento_omie. natureza R means receivable and P means payable.\n" +
+        "  Omie finance: choose the entity that represents the requested business value. " +
+        "movimento_financeiro provides actual settlements: use data_pagamento as the cash date, join " +
+        "codigo_titulo to the title's codigo_lancamento_omie, and interpret natureza R as receivable and P as payable. " +
+        "conta_corrente lists the registered accounts. extrato_conta_corrente provides the account statement and " +
+        "ready-made current, forecast, reconciled, provisional and available balances; filter it with nCodCC, " +
+        "dPeriodoInicial and dPeriodoFinal in DD/MM/YYYY. resumo_financeiro provides Omie's ready-made account " +
+        "balance, payable, receivable and fluxoCaixa values. orcamento_caixa provides the monthly cash budget and " +
+        "accepts nAno and nMes. Do not substitute due dates for data_pagamento or derive a bank position from titles " +
+        "when a ready-made statement or financial summary answers the question.\n" +
         "* lake_* tools: read-only analytical lake and telemetry exploration. Use lake_sources and lake_catalog " +
         "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
         "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
@@ -281,8 +287,28 @@ export function createServer(api: DooorApiClient): McpServer {
         "",
         "For live reads, list connections, inspect capabilities, then call only an advertised list/get operation.",
         "Configured fixed filters are enforced by Dooor and cannot be overridden by the app.",
-        "Omie cash flow: read movimento_financeiro and use data_pagamento as the actual cash date.",
-        "Join movimento_financeiro.codigo_titulo to titulo_receber/titulo_pagar.codigo_lancamento_omie; natureza R is receivable and P is payable.",
+        "## Omie finance entity selection",
+        "- movimento_financeiro: actual settlements. Use data_pagamento as the cash date; join codigo_titulo to titulo_receber/titulo_pagar.codigo_lancamento_omie. natureza R is receivable and P is payable.",
+        "- conta_corrente: registered bank, cash and application accounts and their Omie account codes.",
+        "- extrato_conta_corrente: statement plus current, forecast, reconciled, provisional and available balances. Filter with nCodCC, dPeriodoInicial and dPeriodoFinal; dates use DD/MM/YYYY.",
+        "- resumo_financeiro: Omie's ready-made account balance, accounts payable, accounts receivable and fluxoCaixa values.",
+        "- orcamento_caixa: Omie's monthly cash budget. Filter with nAno and nMes.",
+        "Do not substitute a title's due date for data_pagamento. Do not derive a bank position from titles when extrato_conta_corrente or resumo_financeiro answers the question directly.",
+        "",
+        "## Omie live-read examples",
+        "```ts",
+        "const statement = await dooorConnectionRead(sourceId, {",
+        "  entity: 'extrato_conta_corrente', operation: 'list',",
+        "  filter: { nCodCC: 123456789, dPeriodoInicial: '01/07/2026', dPeriodoFinal: '31/07/2026' },",
+        "  maxRows: 100,",
+        "});",
+        "",
+        "const budget = await dooorConnectionRead(sourceId, {",
+        "  entity: 'orcamento_caixa', operation: 'list',",
+        "  filter: { nAno: 2026, nMes: 7 },",
+        "  maxRows: 100,",
+        "});",
+        "```",
         "Create a separate runtime key restricted to only the required dataSourceIds. Never reuse a person's MCP key.",
         "Read-only always: never attempt writes to the source systems through Dooor and never call them directly.",
         "Cache results in your own database if you need snapshots (e.g. daily).",

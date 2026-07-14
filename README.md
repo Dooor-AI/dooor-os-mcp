@@ -149,11 +149,38 @@ The operation body contains an advertised `entity`, `operation` (`list` or
 credentials in its secret store, enforces configured fixed filters and returns
 only allowlisted read data.
 
-For Omie cash flow, the title entities may not contain the actual settlement
-date. Read `movimento_financeiro`, use `data_pagamento` as the cash date and
-join `codigo_titulo` to `titulo_receber.codigo_lancamento_omie` or
-`titulo_pagar.codigo_lancamento_omie`. `natureza` is `R` for receivables and
-`P` for payables.
+### Omie finance entities
+
+Always inspect the connection capabilities first because they are the source of
+truth for the entities, filters and fields enabled for that connection. The
+finance entities have distinct purposes:
+
+| Entity | Use it for |
+|--------|------------|
+| `movimento_financeiro` | Actual settlements. Use `data_pagamento` as the cash date and join `codigo_titulo` to `titulo_receber.codigo_lancamento_omie` or `titulo_pagar.codigo_lancamento_omie`. `natureza` is `R` for receivables and `P` for payables. |
+| `conta_corrente` | Registered bank, cash and application accounts, including their Omie account code and metadata. |
+| `extrato_conta_corrente` | Account statement and ready-made cash balances. Pass `nCodCC`, `dPeriodoInicial` and `dPeriodoFinal`; dates use `DD/MM/YYYY`. Its response can include current, forecast, reconciled, provisional and available balances. |
+| `resumo_financeiro` | Omie's ready-made financial position, including account balance, accounts payable, accounts receivable and `fluxoCaixa`. Prefer this over deriving the current position from titles when the business question asks for Omie's own number. |
+| `orcamento_caixa` | Omie's monthly cash budget. Filter with `nAno` and `nMes`. |
+
+Example live statement read after discovering `sourceId` and its capabilities:
+
+```json
+{
+  "entity": "extrato_conta_corrente",
+  "operation": "list",
+  "filter": {
+    "nCodCC": 123456789,
+    "dPeriodoInicial": "01/07/2026",
+    "dPeriodoFinal": "31/07/2026"
+  },
+  "maxRows": 100
+}
+```
+
+Do not substitute due dates for `data_pagamento`, and do not calculate a bank
+position from titles when `extrato_conta_corrente` or `resumo_financeiro`
+answers the question directly.
 
 Create a dedicated key for each deployed app with only
 `data-sources:read` and `data-sources:query`, restricted to the required
