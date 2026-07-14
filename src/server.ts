@@ -114,6 +114,9 @@ export function createServer(api: DooorApiClient): McpServer {
         "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
         "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
         "keeps configured source filters authoritative and never returns credentials.\n" +
+        "  For Omie cash flow, title entities may not carry the actual settlement date. Read " +
+        "movimento_financeiro, use data_pagamento as the cash date, and join codigo_titulo to the title's " +
+        "codigo_lancamento_omie. natureza R means receivable and P means payable.\n" +
         "* lake_* tools: read-only analytical lake and telemetry exploration. Use lake_sources and lake_catalog " +
         "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
         "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
@@ -278,6 +281,8 @@ export function createServer(api: DooorApiClient): McpServer {
         "",
         "For live reads, list connections, inspect capabilities, then call only an advertised list/get operation.",
         "Configured fixed filters are enforced by Dooor and cannot be overridden by the app.",
+        "Omie cash flow: read movimento_financeiro and use data_pagamento as the actual cash date.",
+        "Join movimento_financeiro.codigo_titulo to titulo_receber/titulo_pagar.codigo_lancamento_omie; natureza R is receivable and P is payable.",
         "Create a separate runtime key restricted to only the required dataSourceIds. Never reuse a person's MCP key.",
         "Read-only always: never attempt writes to the source systems through Dooor and never call them directly.",
         "Cache results in your own database if you need snapshots (e.g. daily).",
