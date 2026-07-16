@@ -21,6 +21,18 @@ atualize o repositório público. O publish não pode conter segredos: o MCP lê
 O health check externo do servidor hospedado é `GET /health`. O endpoint
 principal MCP é `POST /mcp`.
 
+## Contrato de segurança do servidor hospedado
+
+O MCP público não devolve body do backend, stack trace ou mensagem interna nas
+respostas. Falhas públicas recebem um correlation ID criado pelo próprio
+servidor e enviado também no header `X-Correlation-Id`. IDs enviados pelo
+cliente não são reutilizados.
+
+O limite em memória do MCP é uma defesa local por hash da API key. Ele não usa
+IP de origem, pois proxies podem compartilhar o mesmo IP entre clientes. Esse
+limite vale somente para o processo ou instância atual. O backend do Dooor é a
+fonte autoritativa dos limites e quotas globais entre todas as instâncias.
+
 ## Como sincronizar para o público
 
 A partir desta pasta, copie os arquivos versionáveis para um clone do

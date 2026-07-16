@@ -1,20 +1,34 @@
+import { DooorApiRequestError } from "./error-handling.js";
+
 /**
  * Lightweight HTTP client for Dooor OS REST API.
  * All methods return parsed JSON or throw on non-2xx.
  */
+export interface DooorApiClientOptions {
+  /** Overall caller cancellation, such as an inbound MCP request deadline. */
+  signal?: AbortSignal;
+  /** Per-upstream-request timeout. Defaults to 120 seconds. */
+  requestTimeoutMs?: number;
+}
+
 export class DooorApiClient {
   private workspaceId: string = "";
+  private readonly signal?: AbortSignal;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     readonly baseUrl: string,
     private apiKey: string,
     workspaceId?: string,
+    options: DooorApiClientOptions = {},
   ) {
     // Strip trailing slash
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     if (workspaceId) {
       this.workspaceId = workspaceId;
     }
+    this.signal = options.signal;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
   }
 
   /**
@@ -57,15 +71,15 @@ export class DooorApiClient {
       "Content-Type": "application/json",
     };
 
-    const res = await fetch(url, {
+    const res = await this.fetchWithDeadline(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Dooor API ${method} ${path} failed (${res.status}): ${text}`);
+      await res.body?.cancel().catch(() => undefined);
+      throw new DooorApiRequestError(res.status);
     }
 
     if (res.status === 204) return {} as T;
@@ -83,6 +97,34 @@ export class DooorApiClient {
   }
   private del<T = unknown>(path: string) {
     return this.request<T>("DELETE", path);
+  }
+
+  /**
+   * Composes the per-request timeout with an optional parent AbortSignal.
+   * Event listeners and timers are always released after fetch settles.
+   */
+  private async fetchWithDeadline(
+    input: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const onParentAbort = () => controller.abort(this.signal?.reason);
+    if (this.signal?.aborted) {
+      onParentAbort();
+    } else {
+      this.signal?.addEventListener("abort", onParentAbort, { once: true });
+    }
+    const timeout = setTimeout(
+      () => controller.abort(new Error("Dooor API request deadline exceeded")),
+      this.requestTimeoutMs,
+    );
+
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+      this.signal?.removeEventListener("abort", onParentAbort);
+    }
   }
 
   /** Workspace-scoped path helper */
@@ -319,16 +361,14 @@ export class DooorApiClient {
       body.byteOffset,
       body.byteOffset + body.byteLength,
     ) as ArrayBuffer;
-    const res = await fetch(url, {
+    const res = await this.fetchWithDeadline(url, {
       method: "PUT",
       headers,
       body: ab,
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(
-        `Presigned PUT failed (${res.status}): ${text.slice(0, 500)}`,
-      );
+      await res.body?.cancel().catch(() => undefined);
+      throw new DooorApiRequestError(res.status);
     }
   }
 

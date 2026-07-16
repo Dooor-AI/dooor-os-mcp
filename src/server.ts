@@ -4,6 +4,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { DooorApiClient } from "./api-client.js";
 import { buildSourceTarball, MAX_TARBALL_BYTES } from "./archiver.js";
+import {
+  currentCorrelationId,
+  logInternalError,
+  publicFailure,
+} from "./error-handling.js";
 import { API_KEY_SCOPES, MCP_DEPLOY_AUTOMATION_SCOPES } from "./scopes.js";
 
 /** Helper: wrap API calls and return formatted JSON */
@@ -12,8 +17,9 @@ async function call<T>(fn: () => Promise<T>): Promise<string> {
     const result = await fn();
     return JSON.stringify(result, null, 2);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return JSON.stringify({ error: msg });
+    const correlationId = currentCorrelationId();
+    logInternalError("MCP tool call failed", err, correlationId);
+    return JSON.stringify(publicFailure(err, correlationId));
   }
 }
 
@@ -63,7 +69,7 @@ const TOOL_FAMILIES = [
     family: "lake",
     tools: ["lake_ask", "lake_sources", "lake_catalog", "lake_query", "lake_browse", "lake_sql"],
     useFor:
-      "Explore and analyze telemetry or high-volume analytical lake data through curated tools or read-only SQL.",
+      "Explore and analyze high-volume product data through curated tools or read-only analytical SQL.",
     readOnly: true,
   },
   {
@@ -78,8 +84,9 @@ async function probe<T>(name: string, fn: () => Promise<T>) {
   try {
     return { name, ok: true, data: await fn() };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { name, ok: false, error: message };
+    const correlationId = currentCorrelationId();
+    logInternalError(`MCP capability probe '${name}' failed`, err, correlationId);
+    return { name, ok: false, ...publicFailure(err, correlationId) };
   }
 }
 
@@ -93,7 +100,18 @@ async function probe<T>(name: string, fn: () => Promise<T>) {
  * per request from the request's own Authorization key, so per-client data
  * isolation holds.
  */
-export function createServer(api: DooorApiClient): McpServer {
+export interface CreateServerOptions {
+  /**
+   * Enables tools that read paths from the machine running the MCP process.
+   * This must be opted into by trusted local transports such as stdio.
+   */
+  localFilesystemAccess?: boolean;
+}
+
+export function createServer(
+  api: DooorApiClient,
+  options: CreateServerOptions = {},
+): McpServer {
   const server = new McpServer(
     {
       name: "dooor-os",
@@ -113,23 +131,12 @@ export function createServer(api: DooorApiClient): McpServer {
         "* data_sql: read-only PostgreSQL over the curated business relations for custom joins and metrics.\n" +
         "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
         "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
-        "keeps configured source filters authoritative and never returns credentials. The REST operation response " +
-        "is an envelope whose data array is `records`, with rowCount, truncated, nextCursor, columns, queryId and durationMs. " +
-        "Read `response.records`; never assume a top-level array or `items`/`data`/`results`.\n" +
-        "  Omie finance: choose the entity that represents the requested business value. " +
-        "movimento_financeiro provides actual settlements: use data_pagamento as the cash date, join " +
-        "codigo_titulo to the title's codigo_lancamento_omie, and interpret natureza R as receivable and P as payable. " +
-        "conta_corrente lists the registered accounts. extrato_conta_corrente provides the account statement and " +
-        "ready-made current, forecast, reconciled, provisional and available balances; filter it with nCodCC, " +
-        "dPeriodoInicial and dPeriodoFinal in DD/MM/YYYY. resumo_financeiro provides Omie's ready-made account " +
-        "balance, payable, receivable and fluxoCaixa values. orcamento_caixa provides the monthly cash budget and " +
-        "accepts nAno and nMes. Do not substitute due dates for data_pagamento or derive a bank position from titles " +
-        "when a ready-made statement or financial summary answers the question.\n" +
-        "* lake_* tools: read-only analytical lake and telemetry exploration. Use lake_sources and lake_catalog " +
+        "keeps configured source filters authoritative and never returns credentials.\n" +
+        "* lake_* tools: read-only analytical lake exploration. Use lake_sources and lake_catalog " +
         "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
         "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
         "* lake_code_* tools: read-only search and browsing over indexed legacy business-rule source code.\n\n" +
-        "Use data_* for operational business questions, lake_* for telemetry or high-volume analytical data, " +
+        "Use data_* for operational business questions, lake_* for high-volume analytical data, " +
         "lake_code_* for implementation questions, and platform tools for managing Dooor OS resources. " +
         "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.\n\n" +
         "BUILDING AN APP that needs this data AT RUNTIME (not just exploring here): do NOT embed an MCP " +
@@ -163,36 +170,32 @@ export function createServer(api: DooorApiClient): McpServer {
         .optional()
         .describe("Run lightweight read-only probes for data_sources and lake_sources. Default true."),
     },
-    async ({ includeProbes = true }) => {
-      const workspace = await api.resolveWorkspace();
-      const probes = includeProbes
-        ? await Promise.all([
-            probe("data_products", () => api.dataProducts()),
-            probe("data_sources", () => api.dataSources()),
-            probe("data_connections", () => api.dataConnections()),
-            probe("lake_sources", () => api.lakeSources()),
-          ])
-        : [];
+    async ({ includeProbes = true }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(async () => {
+            const workspace = await api.resolveWorkspace();
+            const probes = includeProbes
+              ? await Promise.all([
+                  probe("data_products", () => api.dataProducts()),
+                  probe("data_sources", () => api.dataSources()),
+                  probe("data_connections", () => api.dataConnections()),
+                  probe("lake_sources", () => api.lakeSources()),
+                ])
+              : [];
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              {
-                server: "dooor-os",
-                version: "0.1.0",
-                workspace,
-                toolFamilies: TOOL_FAMILIES,
-                probes,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    },
+            return {
+              server: "dooor-os",
+              version: "0.1.0",
+              workspace,
+              toolFamilies: TOOL_FAMILIES,
+              probes,
+            };
+          }),
+        },
+      ],
+    }),
   );
 
   server.tool(
@@ -245,7 +248,7 @@ export function createServer(api: DooorApiClient): McpServer {
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data/sql`, {",
         "    method: 'POST', headers: H, body: JSON.stringify({ sql }),",
         "  });",
-        "  if (!r.ok) throw new Error(`dooor sql ${r.status}: ${await r.text()}`);",
+        "  if (!r.ok) throw new Error(`dooor sql failed (${r.status})`);",
         "  return r.json();",
         "}",
         "",
@@ -254,14 +257,14 @@ export function createServer(api: DooorApiClient): McpServer {
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data/ask`, {",
         "    method: 'POST', headers: H, body: JSON.stringify({ question }),",
         "  });",
-        "  if (!r.ok) throw new Error(`dooor ask ${r.status}: ${await r.text()}`);",
+        "  if (!r.ok) throw new Error(`dooor ask failed (${r.status})`);",
         "  return r.json();",
         "}",
         "",
         "export async function dooorConnections() {",
         "  const ws = await workspaceId();",
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources`, { headers: H });",
-        "  if (!r.ok) throw new Error(`dooor connections ${r.status}: ${await r.text()}`);",
+        "  if (!r.ok) throw new Error(`dooor connections failed (${r.status})`);",
         "  return r.json();",
         "}",
         "",
@@ -269,56 +272,26 @@ export function createServer(api: DooorApiClient): McpServer {
         "  const ws = await workspaceId();",
         "  const id = encodeURIComponent(sourceId);",
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources/${id}/capabilities`, { headers: H });",
-        "  if (!r.ok) throw new Error(`dooor capabilities ${r.status}: ${await r.text()}`);",
+        "  if (!r.ok) throw new Error(`dooor capabilities failed (${r.status})`);",
         "  return r.json();",
         "}",
         "",
         "export async function dooorConnectionRead(sourceId: string, input: {",
         "  entity: string; operation: 'list' | 'get'; id?: string;",
         "  filter?: Record<string, unknown>; cursor?: string; maxRows?: number;",
-        "}): Promise<{ records: Record<string, unknown>[]; rowCount: number; truncated: boolean; nextCursor?: string }> {",
+        "}) {",
         "  const ws = await workspaceId();",
         "  const id = encodeURIComponent(sourceId);",
         "  const r = await fetch(`${BASE}/workspaces/${ws}/data-sources/${id}/operation`, {",
         "    method: 'POST', headers: H, body: JSON.stringify(input),",
         "  });",
-        "  if (!r.ok) throw new Error(`dooor connection read ${r.status}: ${await r.text()}`);",
-        "  const result = await r.json();",
-        "  if (!Array.isArray(result.records)) throw new Error('dooor connection read response is missing records');",
-        "  return result;",
+        "  if (!r.ok) throw new Error(`dooor connection read failed (${r.status})`);",
+        "  return r.json();",
         "}",
         "```",
         "",
         "For live reads, list connections, inspect capabilities, then call only an advertised list/get operation.",
         "Configured fixed filters are enforced by Dooor and cannot be overridden by the app.",
-        "## Omie finance entity selection",
-        "- movimento_financeiro: actual settlements. Use data_pagamento as the cash date; join codigo_titulo to titulo_receber/titulo_pagar.codigo_lancamento_omie. natureza R is receivable and P is payable.",
-        "- conta_corrente: registered bank, cash and application accounts and their Omie account codes.",
-        "- extrato_conta_corrente: statement plus current, forecast, reconciled, provisional and available balances. Filter with nCodCC, dPeriodoInicial and dPeriodoFinal; dates use DD/MM/YYYY.",
-        "- resumo_financeiro: Omie's ready-made account balance, accounts payable, accounts receivable and fluxoCaixa values.",
-        "- orcamento_caixa: Omie's monthly cash budget. Filter with nAno and nMes.",
-        "Do not substitute a title's due date for data_pagamento. Do not derive a bank position from titles when extrato_conta_corrente or resumo_financeiro answers the question directly.",
-        "",
-        "## Omie live-read examples",
-        "```ts",
-        "const settlements = await dooorConnectionRead(sourceId, {",
-        "  entity: 'movimento_financeiro', operation: 'list', maxRows: 100,",
-        "});",
-        "const cashRows = settlements.records; // data_pagamento, valor_pago, codigo_titulo, natureza",
-        "",
-        "const statement = await dooorConnectionRead(sourceId, {",
-        "  entity: 'extrato_conta_corrente', operation: 'list',",
-        "  filter: { nCodCC: 123456789, dPeriodoInicial: '01/07/2026', dPeriodoFinal: '31/07/2026' },",
-        "  maxRows: 100,",
-        "});",
-        "",
-        "const budget = await dooorConnectionRead(sourceId, {",
-        "  entity: 'orcamento_caixa', operation: 'list',",
-        "  filter: { nAno: 2026, nMes: 7 },",
-        "  maxRows: 100,",
-        "});",
-        "const budgetRows = budget.records;",
-        "```",
         "Create a separate runtime key restricted to only the required dataSourceIds. Never reuse a person's MCP key.",
         "Read-only always: never attempt writes to the source systems through Dooor and never call them directly.",
         "Cache results in your own database if you need snapshots (e.g. daily).",
@@ -492,113 +465,117 @@ export function createServer(api: DooorApiClient): McpServer {
     }),
   );
 
-  server.tool(
-    "deploy_app_from_directory",
-    "Tar a local directory (respecting .dockerignore/.gitignore + safe defaults), upload it, and trigger a deploy. Use this when the user wants to ship an app from their local filesystem without pushing to git. The MCP runs locally so it has filesystem access. Returns the new deployment id.",
-    {
-      appId: z.string().describe("App ID to deploy"),
-      path: z
-        .string()
-        .describe(
-          "Absolute path to the project root on the user's machine (the dir containing the Dockerfile)",
-        ),
-      extraExcludes: z
-        .array(z.string())
-        .optional()
-        .describe("Extra ignore patterns to merge with .dockerignore/.gitignore"),
-      triggerType: z
-        .enum(["MANUAL", "WEBHOOK", "ROLLBACK", "AUTO_DEPLOY", "ENV_CHANGE"])
-        .optional(),
-    },
-    async ({ appId, path, extraExcludes, triggerType }) => {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: await call(async () => {
-              const tar = await buildSourceTarball(path, extraExcludes);
-              const init = await api.initUpload(appId, {
-                sizeBytes: tar.sizeBytes,
-                sha256: tar.sha256,
-              });
-              await api.putToPresignedUrl(
-                init.presignedPutUrl,
-                init.headers,
-                tar.data,
-              );
-              await api.completeUpload(appId, init.uploadId, {
-                sha256: tar.sha256,
-              });
-              const deployment = await api.triggerDeploy({
-                appId,
-                triggerType,
-                source: { type: "UPLOAD", uploadId: init.uploadId },
-              } as any);
-              return {
-                uploadId: init.uploadId,
-                tarballBytes: tar.sizeBytes,
-                tarballSha256: tar.sha256,
-                excludedEnvFiles: tar.excludedEnvFiles,
-                deployment,
-              };
-            }),
-          },
-        ],
-      };
-    },
-  );
-
-  server.tool(
-    "deploy_app_from_tarball",
-    "Upload an already-built .tar.gz file and trigger a deploy. Use when the user has a prepared tarball; otherwise prefer deploy_app_from_directory which handles tar creation.",
-    {
-      appId: z.string().describe("App ID to deploy"),
-      tarballPath: z.string().describe("Absolute path to .tar.gz on the user's machine"),
-      triggerType: z
-        .enum(["MANUAL", "WEBHOOK", "ROLLBACK", "AUTO_DEPLOY", "ENV_CHANGE"])
-        .optional(),
-    },
-    async ({ appId, tarballPath, triggerType }) => {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: await call(async () => {
-              const stat = statSync(tarballPath);
-              if (stat.size > MAX_TARBALL_BYTES) {
-                throw new Error(
-                  `Tarball is ${stat.size} bytes, exceeds limit of ${MAX_TARBALL_BYTES}`,
+  if (options.localFilesystemAccess === true) {
+    server.tool(
+      "deploy_app_from_directory",
+      "Tar a local directory (respecting .dockerignore/.gitignore + safe defaults), upload it, and trigger a deploy. Use this when the user wants to ship an app from their local filesystem without pushing to git. The MCP runs locally so it has filesystem access. Returns the new deployment id.",
+      {
+        appId: z.string().describe("App ID to deploy"),
+        path: z
+          .string()
+          .describe(
+            "Absolute path to the project root on the user's machine (the dir containing the Dockerfile)",
+          ),
+        extraExcludes: z
+          .array(z.string())
+          .optional()
+          .describe("Extra ignore patterns to merge with .dockerignore/.gitignore"),
+        triggerType: z
+          .enum(["MANUAL", "WEBHOOK", "ROLLBACK", "AUTO_DEPLOY", "ENV_CHANGE"])
+          .optional(),
+      },
+      async ({ appId, path, extraExcludes, triggerType }) => {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: await call(async () => {
+                const tar = await buildSourceTarball(path, extraExcludes);
+                const init = await api.initUpload(appId, {
+                  sizeBytes: tar.sizeBytes,
+                  sha256: tar.sha256,
+                });
+                await api.putToPresignedUrl(
+                  init.presignedPutUrl,
+                  init.headers,
+                  tar.data,
                 );
-              }
-              const data = readFileSync(tarballPath);
-              const sha256 = createHash("sha256").update(data).digest("hex");
-              const init = await api.initUpload(appId, {
-                sizeBytes: data.length,
-                sha256,
-              });
-              await api.putToPresignedUrl(
-                init.presignedPutUrl,
-                init.headers,
-                data,
-              );
-              await api.completeUpload(appId, init.uploadId, { sha256 });
-              const deployment = await api.triggerDeploy({
-                appId,
-                triggerType,
-                source: { type: "UPLOAD", uploadId: init.uploadId },
-              } as any);
-              return {
-                uploadId: init.uploadId,
-                tarballBytes: data.length,
-                tarballSha256: sha256,
-                deployment,
-              };
-            }),
-          },
-        ],
-      };
-    },
-  );
+                await api.completeUpload(appId, init.uploadId, {
+                  sha256: tar.sha256,
+                });
+                const deployment = await api.triggerDeploy({
+                  appId,
+                  triggerType,
+                  source: { type: "UPLOAD", uploadId: init.uploadId },
+                } as any);
+                return {
+                  uploadId: init.uploadId,
+                  tarballBytes: tar.sizeBytes,
+                  tarballSha256: tar.sha256,
+                  excludedEnvFiles: tar.excludedEnvFiles,
+                  deployment,
+                };
+              }),
+            },
+          ],
+        };
+      },
+    );
+
+    server.tool(
+      "deploy_app_from_tarball",
+      "Upload an already-built .tar.gz file and trigger a deploy. Use when the user has a prepared tarball; otherwise prefer deploy_app_from_directory which handles tar creation.",
+      {
+        appId: z.string().describe("App ID to deploy"),
+        tarballPath: z
+          .string()
+          .describe("Absolute path to .tar.gz on the user's machine"),
+        triggerType: z
+          .enum(["MANUAL", "WEBHOOK", "ROLLBACK", "AUTO_DEPLOY", "ENV_CHANGE"])
+          .optional(),
+      },
+      async ({ appId, tarballPath, triggerType }) => {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: await call(async () => {
+                const stat = statSync(tarballPath);
+                if (stat.size > MAX_TARBALL_BYTES) {
+                  throw new Error(
+                    `Tarball is ${stat.size} bytes, exceeds limit of ${MAX_TARBALL_BYTES}`,
+                  );
+                }
+                const data = readFileSync(tarballPath);
+                const sha256 = createHash("sha256").update(data).digest("hex");
+                const init = await api.initUpload(appId, {
+                  sizeBytes: data.length,
+                  sha256,
+                });
+                await api.putToPresignedUrl(
+                  init.presignedPutUrl,
+                  init.headers,
+                  data,
+                );
+                await api.completeUpload(appId, init.uploadId, { sha256 });
+                const deployment = await api.triggerDeploy({
+                  appId,
+                  triggerType,
+                  source: { type: "UPLOAD", uploadId: init.uploadId },
+                } as any);
+                return {
+                  uploadId: init.uploadId,
+                  tarballBytes: data.length,
+                  tarballSha256: sha256,
+                  deployment,
+                };
+              }),
+            },
+          ],
+        };
+      },
+    );
+  }
 
   server.tool(
     "deploy_app_from_image",
@@ -1337,7 +1314,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_connection_read",
-    "Execute one allowlisted read-only list/get operation through Dooor. Call data_connection_capabilities first and use exactly one entity and operation it returns. The REST equivalent returns an envelope whose row array is `records`, plus rowCount, truncated, nextCursor, columns, queryId and durationMs. Runtime apps must read response.records, not a top-level array or items/data/results. This tool never exposes source credentials and never performs source writes.",
+    "Execute one allowlisted read-only list/get operation through Dooor. Call data_connection_capabilities first and use exactly one entity and operation it returns. This tool never exposes source credentials and never performs source writes.",
     {
       sourceId: z.string().describe("Connection ID returned by data_connections"),
       entity: z
@@ -1381,7 +1358,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_overview",
-    "Get the aggregated workspace data overview: ERP financials (a receber/pagar, recebido, inadimplencia, fluxo mensal, top clientes/categorias), issue-tracker demands (by status/type/project), client base, and field-service DB schema.",
+    "Get the aggregated overview exposed by the active data product for this workspace. The available domains and metrics are product-defined. Call data_products first when the workspace is new. Read-only.",
     {},
     async () => ({
       content: [{ type: "text" as const, text: await call(() => api.dataOverview()) }],
@@ -1390,7 +1367,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_ask",
-    "PRIMARY data tool. Ask any natural-language business question (PT-BR or EN) about the workspace's own data and get a grounded answer. Use this for questions about: o APP DE CAMPO / intervencoes de campo (TECNICOS/instaladores, veiculo marca/modelo, MEDICAO virtual vs fisica - RPM/horimetro/odometro, recusas, precos, vinculos de ticket), o financeiro do ERP (a receber/pagar, recebido, inadimplencia), as DEMANDAS do issue tracker (incidentes/status), e a base de CLIENTES. Ex.: 'quais os tecnicos da base do app de campo?', 'clientes com maior % de medicao virtual', 'intervencoes por modelo de equipamento', 'total a receber em aberto'. An orchestrator cross-references the sources deterministically and returns the answer + the per-source steps + a data table. Read-only.",
+    "PRIMARY data tool. Ask a natural-language business question (PT-BR or EN) about the workspace's active data product and receive a grounded answer with evidence from its governed sources. Available subjects depend on the product capabilities returned by data_products. Read-only.",
     {
       question: z.string().describe("Business question in natural language (PT-BR or EN)"),
     },
@@ -1401,7 +1378,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_table",
-    "Preview rows from one connected source. key = 'omie' (financial titles) | 'jira' (issues) | 'clientes' | 'installer' (field interventions: technician, vehicle brand/model, measurement flags, prices, ticket links).",
+    "Preview rows from one source exposed by the active data product provider. Read-only.",
     {
       key: z.enum(["omie", "jira", "clientes", "installer"]).describe("Which source to preview"),
       limit: z.number().optional().describe("Max rows (default 25, max 100)"),
@@ -1413,7 +1390,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_sources",
-    "List the data sources connected for this workspace, each with its live record count and stats (ERP financeiro, issue-tracker demandas, base de clientes, app de campo). Use this to see what data is available before asking.",
+    "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. Use this to discover what can be queried. Read-only.",
     {},
     async () => ({
       content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
@@ -1429,13 +1406,13 @@ export function createServer(api: DooorApiClient): McpServer {
     }),
   );
 
-  // ── Data lake (telemetry data lake on ClickHouse, ~billions of rows) ──
+  // ── Product analytical lake ──
 
   server.tool(
     "lake_ask",
-    "Ask a natural-language question (PT-BR or EN) about FLEET TELEMETRY in the data lake: vehicle utilization, idle time ('tempo ocioso' = engine on but not moving), distance, fuel, by client/vehicle/day. An agent plans a deterministic ClickHouse query grounded in the business-rule catalog, executes it over the gold marts, and returns the answer + data. Use for questions like 'qual cliente tem o maior tempo ocioso?', 'utilizacao da frota de um cliente no ultimo mes', 'consumo medio por veiculo'. Read-only.",
+    "Ask a natural-language question (PT-BR or EN) over the active product's analytical lake. The provider plans a governed query grounded in its catalog and returns the answer with data. Read-only.",
     {
-      question: z.string().describe("Fleet-telemetry question in natural language (PT-BR or EN)"),
+      question: z.string().describe("Analytical question in natural language (PT-BR or EN)"),
     },
     async ({ question }) => ({
       content: [{ type: "text" as const, text: await call(() => api.lakeAsk(question)) }],
@@ -1444,9 +1421,9 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_dashboard",
-    "Generate an INTELLIGENT DASHBOARD about fleet telemetry from a natural-language brief. An agent picks the right metrics/dimensions from the catalog, builds a multi-panel dashboard spec (kpi/line/bar/table), executes each panel over the lake, and returns the panels with data ready to render. Use when the user wants to 'criar/montar um dashboard sobre <cliente/tema>'. Read-only.",
+    "Generate a multi-panel analytical dashboard from a natural-language brief. The active product provider selects governed metrics and dimensions from its catalog, executes the panels, and returns data ready to render. Read-only.",
     {
-      prompt: z.string().describe("What the dashboard should cover, e.g. 'dashboard de ociosidade e utilizacao de um cliente'"),
+      prompt: z.string().describe("What the analytical dashboard should cover"),
     },
     async ({ prompt }) => ({
       content: [{ type: "text" as const, text: await call(() => api.lakeDashboard(prompt)) }],
@@ -1455,10 +1432,10 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_query",
-    "Run a STRUCTURED, validated aggregation over the fleet telemetry lake (no raw SQL). Provide measures + dimensions from the catalog (see lake_catalog). Every key is validated against the catalog before execution. Read-only.",
+    "Run a structured, validated aggregation over the active product's analytical lake (no raw SQL). Provide measures and dimensions from lake_catalog. Every key is validated before execution. Read-only.",
     {
-      measures: z.array(z.string()).describe("Measure keys, e.g. ['utilization_pct','idle_pct','idle_hours']"),
-      dimensions: z.array(z.string()).optional().describe("Dimension keys, e.g. ['client_name'] or ['vehicle_id']"),
+      measures: z.array(z.string()).describe("Measure keys returned by lake_catalog"),
+      dimensions: z.array(z.string()).optional().describe("Dimension keys returned by lake_catalog"),
       granularity: z.enum(["day", "week", "month"]).optional().describe("Time bucketing"),
       orderBy: z.string().optional().describe("Measure key to sort by (desc)"),
       limit: z.number().optional(),
@@ -1470,7 +1447,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_catalog",
-    "Get the fleet-telemetry lake catalog: available clients, measures (utilization, idle, distance, fuel...), dimensions, and the business-rule glossary. Use to discover valid keys for lake_query. Read-only.",
+    "Get the active product's analytical catalog: available datasets, measures, dimensions and business-rule glossary. Use it to discover valid keys for lake_query. Read-only.",
     {},
     async () => ({
       content: [{ type: "text" as const, text: await call(() => api.lakeCatalog()) }],
@@ -1479,7 +1456,7 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_sources",
-    "List everything the fleet data lake exposes for RAW exploration: the camadas (bronze_positions = raw GPS/CAN telemetry per vehicle, ~80 columns; bronze_other = auxiliary tables like drivers/crons; bronze_geofence = geofences; gold = vehicle_daily aggregate) and, per client (DB_MD_<n>), the real tables that exist in /data/lake. Use this to discover client ids and table names to pass to lake_browse. Read-only.",
+    "List the raw and curated layers exposed by the active product's analytical lake. Use this to discover valid source, layer and table identifiers before calling lake_browse. Read-only.",
     {},
     async () => ({
       content: [{ type: "text" as const, text: await call(() => api.lakeSources()) }],
@@ -1488,14 +1465,14 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_browse",
-    "Read RAW rows straight off the lake: bronze layers query the Parquet via ClickHouse file(); gold queries the vehicle_daily gold mart. Returns the real columns (with types), the rows, the exact SQL that ran and the server-side query time (queryMs). Discover valid layer/client/table via lake_sources. For bronze layers pass client=DB_MD_<n>; for bronze_other/bronze_geofence also pass table; for bronze_positions optionally pass vehicleId to focus one vehicle. Read-only, max 1000 rows.",
+    "Browse raw or curated rows from a layer exposed by the active product provider. Returns typed columns, rows, executed SQL and server-side query time. Discover valid identifiers with lake_sources first. Read-only, max 1000 rows.",
     {
       layer: z
         .enum(["bronze_positions", "bronze_other", "bronze_geofence", "gold"])
-        .describe("Camada/fonte a navegar"),
-      client: z.string().optional().describe("Client id DB_MD_<n> (required for bronze layers)"),
-      table: z.string().optional().describe("Table name (for bronze_other / bronze_geofence)"),
-      vehicleId: z.string().optional().describe("Filter to a single vehicle (bronze_positions)"),
+        .describe("Provider layer identifier to browse"),
+      client: z.string().optional().describe("Optional provider dataset identifier"),
+      table: z.string().optional().describe("Optional provider table identifier"),
+      vehicleId: z.string().optional().describe("Optional provider-specific entity filter"),
       limit: z.number().optional().describe("Max rows (default 50, max 1000)"),
     },
     async (p) => ({
@@ -1505,12 +1482,12 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "data_sql",
-    "Run AD-HOC READ-ONLY SQL over the BUSINESS data (Postgres) so you can answer ANY question yourself - lead time, DSO, conversion, cohorts, date math, joins - instead of waiting for a purpose-built metric. Relations (already filtered to this workspace, query them by these names): jira (issue tracker: key, summary, status, issueType, assignee, created, resolutionDate, customfield_10039=developer, ...), omie (financial titles: tipo, clienteNome, categoriaDesc, valor, status, dataEmissao, dataVencimento, dataPagamento, numeroPedido, nCodOs, ...), clientes (client base), intervencoes (=field service: technicianName, clientName, brandName, vehicleModelName, type, motivManu, clientPrice, installerPrice, finishedAt, ...). It is plain PostgreSQL: camelCase columns need double quotes (e.g. \"resolutionDate\"); date math via extract(epoch from (a-b))/86400. Run 'SELECT * FROM jira LIMIT 3' first to see columns. Only ONE SELECT (no top-level WITH - use subqueries); cannot touch platform tables; capped 30s / 5000 rows. Read-only.",
+    "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Relation names and columns are product-defined, so inspect data_products and data_sources first. Platform tables and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
     {
       sql: z
         .string()
         .describe(
-          "A single read-only SELECT over jira/omie/clientes/intervencoes, e.g. lead time: \"SELECT \\\"assignee\\\", count(*) issues, round(avg(extract(epoch from (\\\"resolutionDate\\\"-\\\"created\\\"))/86400)::numeric,1) lead_days FROM jira WHERE \\\"resolutionDate\\\" IS NOT NULL GROUP BY \\\"assignee\\\" ORDER BY issues DESC\"",
+          "A single read-only SQL statement over relations exposed by the active data product",
         ),
     },
     async ({ sql }) => ({
@@ -1520,12 +1497,12 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_sql",
-    "Run AD-HOC READ-ONLY SQL over the fleet data lake (ClickHouse) so you can write your OWN joins, window functions and custom aggregations - instead of being limited to pre-modeled metrics. Use this to compute things the structured tools cannot, e.g. availability, custom KPIs, cross-table analysis. Tables: vehicle_daily (gold mart: per vehicle/day - client_id, vehicle_id, day, total_pings, ign_on_pings, moving_pings, idle_pings, dist_km, fuel_avg, speed_max, op_seconds, first_ts, last_ts), vehicle_dim (vehicle_id -> group/model/category/client_id), client_dim (client_id -> client_name). RAW bronze telemetry (~80 cols) via the file() table function: file('<DB_MD_x>/positions/*.parquet','Parquet') - get client ids/paths from lake_sources. Only ONE read statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN); capped at 30s / 5000 rows. Tip: run DESCRIBE/SHOW first to learn columns. Read-only.",
+    "Run one ad-hoc read-only SQL statement over the active product's analytical lake for custom joins, windows or aggregations. Discover datasets with lake_sources or lake_catalog first. Statement, timeout and row limits are enforced server-side. Read-only.",
     {
       sql: z
         .string()
         .describe(
-          "A single read-only SQL statement, e.g. \"SELECT client_id, sum(idle_pings)/sum(total_pings) idle FROM vehicle_daily GROUP BY client_id ORDER BY idle DESC\"",
+          "A single read-only analytical SQL statement over datasets exposed by the active data product",
         ),
     },
     async ({ sql }) => ({
@@ -1535,11 +1512,11 @@ export function createServer(api: DooorApiClient): McpServer {
 
   server.tool(
     "lake_code_search",
-    "Semantic search (RAG over Qdrant) on the indexed PHP business-rule SOURCE CODE. Returns the most relevant code chunks with file path, summary, snippet and a relevance score. Use to answer 'where/how is X implemented in the code' - idle/ociosidade, availability/disponibilidade, odometer/leitura de odometro, measurement and rental rules, etc. Read-only.",
+    "Semantic search over the business-rule source code indexed for the active product. Returns relevant code chunks with file path, summary, snippet and score. Read-only.",
     {
       query: z
         .string()
-        .describe("Natural-language query, e.g. 'calculo de ociosidade' or 'leitura de odometro'"),
+        .describe("Natural-language implementation or business-rule query"),
       topK: z.number().optional().describe("Number of code chunks to return (default 5)"),
     },
     async ({ query, topK }) => ({

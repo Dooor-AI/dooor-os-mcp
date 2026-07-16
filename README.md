@@ -131,6 +131,21 @@ The server listens on `0.0.0.0:$PORT` (default `8080`):
 included for container deploys (e.g. Cloud Run); it builds and runs
 `dist/http.js`.
 
+### Error handling and rate limits
+
+The hosted server does not return upstream response bodies, stack traces or
+internal exception messages. Public failures include a server-generated
+correlation ID, also returned in the `X-Correlation-Id` response header. Share
+that ID with the operator when troubleshooting. Caller-provided request IDs are
+not trusted or echoed.
+
+The HTTP process keeps a best-effort in-memory limit of 120 requests per minute
+for each hashed API key, plus a process-local concurrency guard. It is only a
+defense for that MCP instance. The Dooor backend is the authoritative source
+for global quotas and rate limits across every MCP instance. The MCP server
+does not identify or rate-limit clients by source IP because reverse proxies
+can make unrelated clients share one address.
+
 ## Building an app with connected data
 
 Use MCP while developing to discover what the workspace exposes. A running app
@@ -147,43 +162,7 @@ operational connection, use this sequence:
 The operation body contains an advertised `entity`, `operation` (`list` or
 `get`) and optional `id`, `filter`, `cursor` and `maxRows`. Dooor keeps source
 credentials in its secret store, enforces configured fixed filters and returns
-only allowlisted read data. The response is an envelope with `records` as the
-data array, plus `rowCount`, `truncated`, optional `nextCursor`, `columns`,
-`queryId` and `durationMs`. Read rows from `response.records`; do not assume the
-top-level response is an array or use `items`, `data` or `results`.
-
-### Omie finance entities
-
-Always inspect the connection capabilities first because they are the source of
-truth for the entities, filters and fields enabled for that connection. The
-finance entities have distinct purposes:
-
-| Entity | Use it for |
-|--------|------------|
-| `movimento_financeiro` | Actual settlements. Use `data_pagamento` as the cash date and join `codigo_titulo` to `titulo_receber.codigo_lancamento_omie` or `titulo_pagar.codigo_lancamento_omie`. `natureza` is `R` for receivables and `P` for payables. |
-| `conta_corrente` | Registered bank, cash and application accounts, including their Omie account code and metadata. |
-| `extrato_conta_corrente` | Account statement and ready-made cash balances. Pass `nCodCC`, `dPeriodoInicial` and `dPeriodoFinal`; dates use `DD/MM/YYYY`. Its response can include current, forecast, reconciled, provisional and available balances. |
-| `resumo_financeiro` | Omie's ready-made financial position, including account balance, accounts payable, accounts receivable and `fluxoCaixa`. Prefer this over deriving the current position from titles when the business question asks for Omie's own number. |
-| `orcamento_caixa` | Omie's monthly cash budget. Filter with `nAno` and `nMes`. |
-
-Example live statement read after discovering `sourceId` and its capabilities:
-
-```json
-{
-  "entity": "extrato_conta_corrente",
-  "operation": "list",
-  "filter": {
-    "nCodCC": 123456789,
-    "dPeriodoInicial": "01/07/2026",
-    "dPeriodoFinal": "31/07/2026"
-  },
-  "maxRows": 100
-}
-```
-
-Do not substitute due dates for `data_pagamento`, and do not calculate a bank
-position from titles when `extrato_conta_corrente` or `resumo_financeiro`
-answers the question directly.
+only allowlisted read data.
 
 Create a dedicated key for each deployed app with only
 `data-sources:read` and `data-sources:query`, restricted to the required
@@ -195,4 +174,6 @@ a complete TypeScript client.
 
 ```bash
 npm run dev    # tsc --watch
+npm run typecheck
+npm test
 ```
