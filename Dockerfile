@@ -15,5 +15,5 @@ RUN npm run build
 ENV PORT=8080
 EXPOSE 8080
 
-# Stateless Streamable HTTP server; API key comes per-request via Authorization.
+# Stateless Streamable HTTP server; API key comes per request via X-Api-Key.
 CMD ["node", "dist/http.js"]
