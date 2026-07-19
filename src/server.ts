@@ -51,7 +51,7 @@ const TOOL_FAMILIES = [
       "data_sql",
     ],
     useFor:
-      "Answer business questions over connected operational sources such as field service, finance, issues and client records.",
+      "Answer grounded business questions over the operational sources advertised by the active workspace product.",
     readOnly: true,
   },
   {
@@ -75,7 +75,7 @@ const TOOL_FAMILIES = [
   {
     family: "lake_code",
     tools: ["lake_code_search", "lake_code_list"],
-    useFor: "Search or page through indexed legacy business-rule source code.",
+    useFor: "Search or page through business-rule source code advertised by the active workspace product.",
     readOnly: true,
   },
 ] as const;

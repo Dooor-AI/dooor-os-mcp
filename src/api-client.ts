@@ -184,7 +184,7 @@ export class DooorApiClient {
   }
 
   // -------------------------------------------------------------------------
-  // Data lake (telemetry data lake - ClickHouse)
+  // Product analytical data
   // -------------------------------------------------------------------------
 
   lakeCatalog() {
