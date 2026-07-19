@@ -24,6 +24,42 @@ async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
   }
 }
 
+async function callCapabilities(api: Partial<DooorApiClient>) {
+  const server = createServer(api as DooorApiClient);
+  const client = new Client(
+    { name: "dooor-mcp-capabilities-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "capabilities",
+      arguments: { includeProbes: true },
+    });
+    const content = (
+      response as { content: Array<{ type: string; text?: string }> }
+    ).content;
+    const text = content.find((item) => item.type === "text");
+    assert.equal(text?.type, "text");
+    assert.equal(typeof text?.text, "string");
+    if (!text?.text) throw new Error("capabilities returned no text content");
+    return JSON.parse(text.text) as {
+      toolFamilies: Array<{
+        family: string;
+        tools: string[];
+        availability: string;
+      }>;
+      probes: Array<{ name: string; ok: boolean }>;
+    };
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+}
+
 test("remote mode does not register filesystem deployment tools", async () => {
   const tools = await listToolNames({ localFilesystemAccess: false });
 
@@ -43,4 +79,54 @@ test("trusted local mode explicitly enables filesystem deployment tools", async 
 
   assert.equal(tools.includes("deploy_app_from_directory"), true);
   assert.equal(tools.includes("deploy_app_from_tarball"), true);
+});
+
+test("capabilities probes only families advertised by the active product", async () => {
+  let lakeProbeCount = 0;
+  const result = await callCapabilities({
+    resolveWorkspace: async () => ({
+      workspaceId: "ws-creator",
+      workspaceName: "Workspace",
+      scopes: ["data-sources:read"],
+    }),
+    dataProducts: async () => ({
+      products: [
+        {
+          capabilities: [
+            {
+              key: "business-data",
+              family: "data",
+              mcpTools: [
+                "data_overview",
+                "data_sources",
+                "data_sql",
+                "data_ask",
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+    dataSources: async () => [{ key: "deal_current" }],
+    dataConnections: async () => [{ id: "source-1" }],
+    lakeSources: async () => {
+      lakeProbeCount += 1;
+      throw new Error("lake should not be probed");
+    },
+  });
+
+  assert.equal(lakeProbeCount, 0);
+  assert.deepEqual(
+    result.probes.map((probe) => probe.name).sort(),
+    ["data_connections", "data_sources"],
+  );
+  assert.deepEqual(
+    result.toolFamilies.find((family) => family.family === "data")?.tools,
+    ["data_ask", "data_sources", "data_overview", "data_sql"],
+  );
+  assert.equal(
+    result.toolFamilies.find((family) => family.family === "lake")
+      ?.availability,
+    "unavailable",
+  );
 });

@@ -42,14 +42,16 @@ for clients that prefer not to clone and build anything.
 
 ## Local (stdio)
 
-Clone, install, build:
+Clone and install:
 
 ```bash
 git clone https://github.com/Dooor-AI/dooor-os-mcp.git
 cd dooor-os-mcp
 npm install
-npm run build
 ```
+
+`npm start` compiles before starting, so the local MCP remains usable after a
+fresh clone or cleanup without depending on an old `dist/` directory.
 
 Then register it with your MCP client, passing your workspace API key via the
 `DOOOR_API_KEY` environment variable. Example MCP client config:
@@ -58,8 +60,8 @@ Then register it with your MCP client, passing your workspace API key via the
 {
   "mcpServers": {
     "dooor-os": {
-      "command": "node",
-      "args": ["/absolute/path/to/dooor-os-mcp/dist/index.js"],
+      "command": "npm",
+      "args": ["--prefix", "/absolute/path/to/dooor-os-mcp", "start"],
       "env": {
         "DOOOR_API_KEY": "dor_sk_your_key_here"
       }

@@ -7,7 +7,7 @@ import { DooorApiRequestError } from "./error-handling.js";
 export interface DooorApiClientOptions {
   /** Overall caller cancellation, such as an inbound MCP request deadline. */
   signal?: AbortSignal;
-  /** Per-upstream-request timeout. Defaults to 120 seconds. */
+  /** Per-upstream-request timeout. Defaults to 270 seconds. */
   requestTimeoutMs?: number;
 }
 
@@ -28,7 +28,10 @@ export class DooorApiClient {
       this.workspaceId = workspaceId;
     }
     this.signal = options.signal;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
+    // The governed data agent can perform several evidence-gathering rounds.
+    // Its backend budget is 240 s, so the client leaves enough room for that
+    // work while still completing before the 300 s hosted-service boundary.
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 270_000;
   }
 
   /**
