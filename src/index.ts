@@ -2,7 +2,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { DooorApiClient } from "./api-client.js";
-import { createServer } from "./server.js";
+import { createServer, enabledProductToolsFrom } from "./server.js";
 
 const DOOOR_API_KEY = process.env.DOOOR_API_KEY;
 const DOOOR_BASE_URL =
@@ -15,8 +15,12 @@ if (!DOOOR_API_KEY) {
 
 const api = new DooorApiClient(DOOOR_BASE_URL, DOOOR_API_KEY);
 await api.resolveWorkspace();
+const enabledProductTools = enabledProductToolsFrom(await api.dataProducts());
 
-const server = createServer(api, { localFilesystemAccess: true });
+const server = createServer(api, {
+  localFilesystemAccess: true,
+  enabledProductTools,
+});
 const transport = new StdioServerTransport();
 
 await server.connect(transport);

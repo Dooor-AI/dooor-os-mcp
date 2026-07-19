@@ -176,12 +176,34 @@ export interface CreateServerOptions {
    * This must be opted into by trusted local transports such as stdio.
    */
   localFilesystemAccess?: boolean;
+  /**
+   * Product-scoped tools advertised by GET /data-products for this key's
+   * workspace. When provided, product tools fail closed and only these names
+   * are registered. Platform and live-connection discovery tools remain
+   * available according to the API key's server-side scopes.
+   */
+  enabledProductTools?: ReadonlySet<string>;
+}
+
+export function enabledProductToolsFrom(payload: unknown): ReadonlySet<string> {
+  return new Set(productCapabilitySummary(payload).mcpTools);
 }
 
 export function createServer(
   api: DooorApiClient,
   options: CreateServerOptions = {},
 ): McpServer {
+  const productToolEnabled = (name: string) =>
+    options.enabledProductTools === undefined ||
+    options.enabledProductTools.has(name);
+  const enabledProductToolNames = options.enabledProductTools
+    ? [...options.enabledProductTools].sort()
+    : [];
+  const productToolInstructions = options.enabledProductTools
+    ? enabledProductToolNames.length > 0
+      ? `Workspace-advertised product tools: ${enabledProductToolNames.join(", ")}.`
+      : "This workspace advertises no product-specific data tools."
+    : "Call data_products to discover the workspace's product-specific data tools.";
   const server = new McpServer(
     {
       name: "dooor-os",
@@ -189,45 +211,19 @@ export function createServer(
     },
     {
       instructions:
-        "Dooor OS workspace access through MCP. Start with capabilities when a client needs to know " +
-        "which workspace, scopes, tool families and connected data sources are available.\n\n" +
-        "Tool families:\n" +
-        "* platform tools: apps, deploys, git, databases, env vars, agents and monitoring. Some mutate state.\n" +
-        "* data_products: discover which productized data experiences are enabled in this workspace.\n" +
-        "* data_* tools: read-only business data from connected operational sources. Use data_ask for " +
-        "natural-language questions such as \"quais os técnicos da base do app de campo\", " +
-        "\"clientes com mais medição virtual\", \"quantas intervenções por modelo/marca\", " +
-        "\"total a receber no ERP\", \"incidentes no tracker\" and \"recusas por cliente\".\n" +
-        "* data_sql: read-only PostgreSQL over the curated business relations for custom joins and metrics.\n" +
-        "* data_connections: list live operational connections. Then call data_connection_capabilities with " +
-        "a source ID before data_connection_read. The live proxy exposes only allowlisted list/get operations, " +
-        "keeps configured source filters authoritative and never returns credentials.\n" +
-        "* lake_* tools: read-only analytical lake exploration. Use lake_sources and lake_catalog " +
-        "to discover valid clients, layers, measures and dimensions before browsing or querying.\n" +
-        "* lake_sql: read-only ClickHouse SQL for custom lake analysis when structured lake_query is too narrow.\n" +
-        "* lake_code_* tools: read-only search and browsing over indexed legacy business-rule source code.\n\n" +
-        "Use data_* for operational business questions, lake_* for high-volume analytical data, " +
-        "lake_code_* for implementation questions, and platform tools for managing Dooor OS resources. " +
-        "All data_*, lake_* and lake_code_* tools are read-only and scoped to this workspace.\n\n" +
-        "BUILDING AN APP that needs this data AT RUNTIME (not just exploring here): do NOT embed an MCP " +
-        "client in the app and do NOT call the source systems directly. The app's backend calls the same " +
-        "read-only REST API these tools wrap, base `DOOOR_BASE_URL` (e.g. https://api.os.dooor.ai/v1):\n" +
-        "* POST /workspaces/{workspaceId}/data/sql   body {\"sql\":\"select ...\"}  (one read-only SELECT)\n" +
-        "* POST /workspaces/{workspaceId}/data/ask   body {\"question\":\"...\"}    (natural-language answer)\n" +
-        "* GET  /workspaces/{workspaceId}/data-products\n" +
-        "* GET  /workspaces/{workspaceId}/data-sources\n" +
-        "* GET  /workspaces/{workspaceId}/data-sources/{sourceId}/capabilities\n" +
-        "* POST /workspaces/{workspaceId}/data-sources/{sourceId}/operation body " +
-        "{\"entity\":\"...\",\"operation\":\"list|get\",\"id\":\"optional\",\"filter\":{},\"cursor\":\"optional\",\"maxRows\":100}\n" +
-        "* GET  /workspaces/{workspaceId}/data/overview | /data/sources | /data/table/{key}\n" +
-        "* /workspaces/{workspaceId}/data/lake/* for the analytical lake.\n" +
-        "Auth with header `Authorization: Bearer <DOOOR_API_KEY>` (a dor_sk_ workspace key). Set " +
-        "DOOOR_API_KEY and DOOOR_BASE_URL as server-side ENV VARS in the app, never hardcode or expose them " +
-        "to browser code; resolve workspaceId once via GET /api-keys/whoami. A deployed app needs its own key " +
-        "with only data-sources:read and data-sources:query, restricted to the required dataSourceIds. Never " +
-        "reuse a person's MCP key. Everything is read-only and scoped to the key's workspace and source allowlist. In short: " +
-        "MCP tools = dev-time exploration; the REST API = the running app. Call the integration_guide tool " +
-        "for a copy-pasteable code example.",
+        "Dooor OS workspace access through MCP. Start with capabilities to inspect the active workspace, " +
+        "API-key scopes, advertised product capabilities and connected data sources. " +
+        `${productToolInstructions}\n\n` +
+        "Only call a product tool that appears in this server's tool list. Product data tools are read-only, " +
+        "workspace-scoped and selected from the active product contract. Use data_sources before data_sql, " +
+        "and prefer data_ask for grounded business questions. Do not infer invoice, payment, payout, cash, " +
+        "revenue or causality unless the returned sources and fields explicitly support that meaning.\n\n" +
+        "For live operational connections, call data_connections, then data_connection_capabilities, then " +
+        "data_connection_read with an advertised list/get operation. Fixed source filters are authoritative, " +
+        "credentials are never returned and source writes are unavailable.\n\n" +
+        "Platform tools can mutate Dooor OS resources. Use them only when the user explicitly requests that " +
+        "operation. For a deployed app, use a dedicated least-privilege workspace API key and the REST API " +
+        "described by integration_guide. Never hardcode a key or expose it to browser code.",
     },
   );
 
@@ -1477,191 +1473,229 @@ export function createServer(
     }),
   );
 
-  server.tool(
-    "data_overview",
-    "Get the aggregated overview exposed by the active data product for this workspace. The available domains and metrics are product-defined. Call data_products first when the workspace is new. Read-only.",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataOverview()) }],
-    }),
-  );
+  if (productToolEnabled("data_overview")) {
+    server.tool(
+      "data_overview",
+      "Get the aggregated overview exposed by the active data product for this workspace. The available domains and metrics are product-defined. Call data_products first when the workspace is new. Read-only.",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataOverview()) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "data_ask",
-    "PRIMARY data tool. Ask a natural-language business question (PT-BR or EN) about the workspace's active data product and receive a grounded answer with evidence from its governed sources. Available subjects depend on the product capabilities returned by data_products. Read-only.",
-    {
-      question: z.string().describe("Business question in natural language (PT-BR or EN)"),
-    },
-    async ({ question }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataAsk(question)) }],
-    }),
-  );
+  if (productToolEnabled("data_ask")) {
+    server.tool(
+      "data_ask",
+      "PRIMARY data tool. Ask a natural-language business question (PT-BR or EN) about the workspace's active data product and receive a grounded answer with evidence from its governed sources. Available subjects depend on the product capabilities returned by data_products. Read-only.",
+      {
+        question: z.string().describe("Business question in natural language (PT-BR or EN)"),
+      },
+      async ({ question }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataAsk(question)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "data_table",
-    "Preview rows from one source exposed by the active data product provider. Call data_products first and use this tool only when data_table is advertised by an enabled capability. Read-only.",
-    {
-      key: z
-        .string()
-        .min(1)
-        .describe("Provider-defined source key. Discover valid keys with data_sources."),
-      limit: z.number().optional().describe("Max rows (default 25, max 100)"),
-    },
-    async ({ key, limit }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataTable(key, limit)) }],
-    }),
-  );
+  if (productToolEnabled("data_table")) {
+    server.tool(
+      "data_table",
+      "Preview rows from one source exposed by the active data product provider. Call data_products first and use this tool only when data_table is advertised by an enabled capability. Read-only.",
+      {
+        key: z
+          .string()
+          .min(1)
+          .describe("Provider-defined source key. Discover valid keys with data_sources."),
+        limit: z.number().optional().describe("Max rows (default 25, max 100)"),
+      },
+      async ({ key, limit }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataTable(key, limit)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "data_sources",
-    "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. Use this to discover what can be queried. Read-only.",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
-    }),
-  );
+  if (productToolEnabled("data_sources")) {
+    server.tool(
+      "data_sources",
+      "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. Use this to discover what can be queried. Read-only.",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "data_insights",
-    "Get the latest proactive insight digest discovered across the connected sources (ranked findings with metric, value, evidence and recommended action). Read-only.",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataInsightsLatest()) }],
-    }),
-  );
+  if (productToolEnabled("data_insights")) {
+    server.tool(
+      "data_insights",
+      "Get the latest proactive insight digest discovered across the connected sources (ranked findings with metric, value, evidence and recommended action). Read-only.",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataInsightsLatest()) }],
+      }),
+    );
+  }
 
   // ── Product analytical lake ──
 
-  server.tool(
-    "lake_ask",
-    "Ask a natural-language question (PT-BR or EN) over the active product's analytical lake. The provider plans a governed query grounded in its catalog and returns the answer with data. Read-only.",
-    {
-      question: z.string().describe("Analytical question in natural language (PT-BR or EN)"),
-    },
-    async ({ question }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeAsk(question)) }],
-    }),
-  );
+  if (productToolEnabled("lake_ask")) {
+    server.tool(
+      "lake_ask",
+      "Ask a natural-language question (PT-BR or EN) over the active product's analytical lake. The provider plans a governed query grounded in its catalog and returns the answer with data. Read-only.",
+      {
+        question: z.string().describe("Analytical question in natural language (PT-BR or EN)"),
+      },
+      async ({ question }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeAsk(question)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_dashboard",
-    "Generate a multi-panel analytical dashboard from a natural-language brief. The active product provider selects governed metrics and dimensions from its catalog, executes the panels, and returns data ready to render. Read-only.",
-    {
-      prompt: z.string().describe("What the analytical dashboard should cover"),
-    },
-    async ({ prompt }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeDashboard(prompt)) }],
-    }),
-  );
+  if (productToolEnabled("lake_dashboard")) {
+    server.tool(
+      "lake_dashboard",
+      "Generate a multi-panel analytical dashboard from a natural-language brief. The active product provider selects governed metrics and dimensions from its catalog, executes the panels, and returns data ready to render. Read-only.",
+      {
+        prompt: z.string().describe("What the analytical dashboard should cover"),
+      },
+      async ({ prompt }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeDashboard(prompt)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_query",
-    "Run a structured, validated aggregation over the active product's analytical lake (no raw SQL). Provide measures and dimensions from lake_catalog. Every key is validated before execution. Read-only.",
-    {
-      measures: z.array(z.string()).describe("Measure keys returned by lake_catalog"),
-      dimensions: z.array(z.string()).optional().describe("Dimension keys returned by lake_catalog"),
-      granularity: z.enum(["day", "week", "month"]).optional().describe("Time bucketing"),
-      orderBy: z.string().optional().describe("Measure key to sort by (desc)"),
-      limit: z.number().optional(),
-    },
-    async (spec) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeQuery(spec)) }],
-    }),
-  );
+  if (productToolEnabled("lake_query")) {
+    server.tool(
+      "lake_query",
+      "Run a structured, validated aggregation over the active product's analytical lake (no raw SQL). Provide measures and dimensions from lake_catalog. Every key is validated before execution. Read-only.",
+      {
+        measures: z.array(z.string()).describe("Measure keys returned by lake_catalog"),
+        dimensions: z.array(z.string()).optional().describe("Dimension keys returned by lake_catalog"),
+        granularity: z.enum(["day", "week", "month"]).optional().describe("Time bucketing"),
+        orderBy: z.string().optional().describe("Measure key to sort by (desc)"),
+        limit: z.number().optional(),
+      },
+      async (spec) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeQuery(spec)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_catalog",
-    "Get the active product's analytical catalog: available datasets, measures, dimensions and business-rule glossary. Use it to discover valid keys for lake_query. Read-only.",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeCatalog()) }],
-    }),
-  );
+  if (productToolEnabled("lake_catalog")) {
+    server.tool(
+      "lake_catalog",
+      "Get the active product's analytical catalog: available datasets, measures, dimensions and business-rule glossary. Use it to discover valid keys for lake_query. Read-only.",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCatalog()) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_sources",
-    "List the raw and curated layers exposed by the active product's analytical lake. Use this to discover valid source, layer and table identifiers before calling lake_browse. Read-only.",
-    {},
-    async () => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeSources()) }],
-    }),
-  );
+  if (productToolEnabled("lake_sources")) {
+    server.tool(
+      "lake_sources",
+      "List the raw and curated layers exposed by the active product's analytical lake. Use this to discover valid source, layer and table identifiers before calling lake_browse. Read-only.",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeSources()) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_browse",
-    "Browse raw or curated rows from a layer exposed by the active product provider. Returns typed columns, rows, executed SQL and server-side query time. Discover valid identifiers with lake_sources first. Read-only, max 1000 rows.",
-    {
-      layer: z
-        .enum(["bronze_positions", "bronze_other", "bronze_geofence", "gold"])
-        .describe("Provider layer identifier to browse"),
-      client: z.string().optional().describe("Optional provider dataset identifier"),
-      table: z.string().optional().describe("Optional provider table identifier"),
-      vehicleId: z.string().optional().describe("Optional provider-specific entity filter"),
-      limit: z.number().optional().describe("Max rows (default 50, max 1000)"),
-    },
-    async (p) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeBrowse(p)) }],
-    }),
-  );
+  if (productToolEnabled("lake_browse")) {
+    server.tool(
+      "lake_browse",
+      "Browse raw or curated rows from a layer exposed by the active product provider. Returns typed columns, rows, executed SQL and server-side query time. Discover valid identifiers with lake_sources first. Read-only, max 1000 rows.",
+      {
+        layer: z
+          .string()
+          .min(1)
+          .describe("Provider layer identifier returned by lake_sources"),
+        client: z.string().optional().describe("Optional provider dataset identifier"),
+        table: z.string().optional().describe("Optional provider table identifier"),
+        entityId: z.string().optional().describe("Optional provider-specific entity filter"),
+        limit: z.number().optional().describe("Max rows (default 50, max 1000)"),
+      },
+      async ({ entityId, ...params }) => ({
+        content: [
+          {
+            type: "text" as const,
+            text: await call(() =>
+              api.lakeBrowse({ ...params, vehicleId: entityId }),
+            ),
+          },
+        ],
+      }),
+    );
+  }
 
-  server.tool(
-    "data_sql",
-    "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Relation names and columns are product-defined, so inspect data_products and data_sources first. Platform tables and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
-    {
-      sql: z
-        .string()
-        .describe(
-          "A single read-only SQL statement over relations exposed by the active data product",
-        ),
-    },
-    async ({ sql }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.dataSql(sql)) }],
-    }),
-  );
+  if (productToolEnabled("data_sql")) {
+    server.tool(
+      "data_sql",
+      "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Relation names and columns are product-defined, so inspect data_products and data_sources first. Platform tables and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
+      {
+        sql: z
+          .string()
+          .describe(
+            "A single read-only SQL statement over relations exposed by the active data product",
+          ),
+      },
+      async ({ sql }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.dataSql(sql)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_sql",
-    "Run one ad-hoc read-only SQL statement over the active product's analytical lake for custom joins, windows or aggregations. Discover datasets with lake_sources or lake_catalog first. Statement, timeout and row limits are enforced server-side. Read-only.",
-    {
-      sql: z
-        .string()
-        .describe(
-          "A single read-only analytical SQL statement over datasets exposed by the active data product",
-        ),
-    },
-    async ({ sql }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeSql(sql)) }],
-    }),
-  );
+  if (productToolEnabled("lake_sql")) {
+    server.tool(
+      "lake_sql",
+      "Run one ad-hoc read-only SQL statement over the active product's analytical lake for custom joins, windows or aggregations. Discover datasets with lake_sources or lake_catalog first. Statement, timeout and row limits are enforced server-side. Read-only.",
+      {
+        sql: z
+          .string()
+          .describe(
+            "A single read-only analytical SQL statement over datasets exposed by the active data product",
+          ),
+      },
+      async ({ sql }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeSql(sql)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_code_search",
-    "Semantic search over the business-rule source code indexed for the active product. Returns relevant code chunks with file path, summary, snippet and score. Read-only.",
-    {
-      query: z
-        .string()
-        .describe("Natural-language implementation or business-rule query"),
-      topK: z.number().optional().describe("Number of code chunks to return (default 5)"),
-    },
-    async ({ query, topK }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeCodeSearch(query, topK)) }],
-    }),
-  );
+  if (productToolEnabled("lake_code_search")) {
+    server.tool(
+      "lake_code_search",
+      "Semantic search over the business-rule source code indexed for the active product. Returns relevant code chunks with file path, summary, snippet and score. Read-only.",
+      {
+        query: z
+          .string()
+          .describe("Natural-language implementation or business-rule query"),
+        topK: z.number().optional().describe("Number of code chunks to return (default 5)"),
+      },
+      async ({ query, topK }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCodeSearch(query, topK)) }],
+      }),
+    );
+  }
 
-  server.tool(
-    "lake_code_list",
-    "Browse the indexed code chunks page by page (no query). Returns { items, total, nextOffset }. Pass the opaque nextOffset cursor from a previous call to page forward. Use lake_code_search instead when you know what you are looking for. Read-only.",
-    {
-      limit: z.number().optional().describe("Chunks per page (default 20, max 200)"),
-      offset: z
-        .union([z.string(), z.number()])
-        .optional()
-        .describe("Opaque cursor (nextOffset) from a previous call"),
-    },
-    async ({ limit, offset }) => ({
-      content: [{ type: "text" as const, text: await call(() => api.lakeCodeList(limit, offset)) }],
-    }),
-  );
+  if (productToolEnabled("lake_code_list")) {
+    server.tool(
+      "lake_code_list",
+      "Browse the indexed code chunks page by page (no query). Returns { items, total, nextOffset }. Pass the opaque nextOffset cursor from a previous call to page forward. Use lake_code_search instead when you know what you are looking for. Read-only.",
+      {
+        limit: z.number().optional().describe("Chunks per page (default 20, max 200)"),
+        offset: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe("Opaque cursor (nextOffset) from a previous call"),
+      },
+      async ({ limit, offset }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCodeList(limit, offset)) }],
+      }),
+    );
+  }
 
   return server;
 }
