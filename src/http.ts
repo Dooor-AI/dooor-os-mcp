@@ -30,7 +30,7 @@ import {
   logInternalError,
   withCorrelationId,
 } from "./error-handling.js";
-import { createServer } from "./server.js";
+import { createServer, enabledProductToolsFrom } from "./server.js";
 
 const BASE_URL = process.env.DOOOR_BASE_URL || "https://api.os.dooor.ai/v1";
 const PORT = Number(process.env.PORT) || 8080;
@@ -294,7 +294,21 @@ async function handleMcpPost(
     );
   }
 
-  const server = createServer(api, { localFilesystemAccess: false });
+  let enabledProductTools: ReadonlySet<string> = new Set();
+  try {
+    enabledProductTools = enabledProductToolsFrom(await api.dataProducts());
+  } catch (err) {
+    logInternalError(
+      "MCP product capability discovery failed closed",
+      err,
+      correlationId,
+    );
+  }
+
+  const server = createServer(api, {
+    localFilesystemAccess: false,
+    enabledProductTools,
+  });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });

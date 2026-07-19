@@ -3,7 +3,11 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { DooorApiClient } from "./api-client.js";
-import { createServer, type CreateServerOptions } from "./server.js";
+import {
+  createServer,
+  enabledProductToolsFrom,
+  type CreateServerOptions,
+} from "./server.js";
 
 async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
   const server = createServer({} as DooorApiClient, options);
@@ -79,6 +83,49 @@ test("trusted local mode explicitly enables filesystem deployment tools", async 
 
   assert.equal(tools.includes("deploy_app_from_directory"), true);
   assert.equal(tools.includes("deploy_app_from_tarball"), true);
+});
+
+test("hosted registry exposes only product tools advertised by the workspace", async () => {
+  const enabledProductTools = enabledProductToolsFrom({
+    products: [
+      {
+        capabilities: [
+          {
+            family: "data",
+            mcpTools: ["data_overview", "data_sources", "data_sql", "data_ask"],
+          },
+          {
+            family: "data",
+            mcpTools: ["data_insights"],
+          },
+        ],
+      },
+    ],
+  });
+  const tools = await listToolNames({
+    localFilesystemAccess: false,
+    enabledProductTools,
+  });
+
+  assert.equal(tools.includes("data_products"), true);
+  assert.equal(tools.includes("data_connections"), true);
+  assert.equal(tools.includes("data_ask"), true);
+  assert.equal(tools.includes("data_sql"), true);
+  assert.equal(tools.includes("data_insights"), true);
+  assert.equal(tools.includes("data_table"), false);
+  assert.equal(tools.some((name) => name.startsWith("lake_")), false);
+});
+
+test("hosted registry fails closed when no product tools are advertised", async () => {
+  const tools = await listToolNames({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set(),
+  });
+
+  assert.equal(tools.includes("data_products"), true);
+  assert.equal(tools.includes("data_ask"), false);
+  assert.equal(tools.includes("data_insights"), false);
+  assert.equal(tools.some((name) => name.startsWith("lake_")), false);
 });
 
 test("capabilities probes only families advertised by the active product", async () => {

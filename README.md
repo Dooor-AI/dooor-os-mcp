@@ -8,6 +8,11 @@ can operate the platform on your behalf.
 Every tool is scoped to a single workspace, resolved from the API key you
 provide. All `data_*` and `lake_*` tools are read-only.
 
+The server discovers the active product contract before building its registry.
+It exposes only the product tools advertised for that workspace and fails
+closed when capability discovery is unavailable. This prevents one client's
+product-specific tools or schemas from appearing in another client's session.
+
 ## Tool families
 
 Start with `capabilities` when connecting a new client. It returns the active
@@ -19,16 +24,16 @@ connected data sources.
   monitoring.
 * `data_products`: discover which data products and capabilities are enabled
   for the active workspace.
-* `data_*`: business questions over connected operational sources such as field
-  service, finance, issues and client records. Use `data_ask` first for most
-  natural-language questions.
+* `data_*`: business questions over the connected operational sources exposed
+  by the active product. Use `data_ask` first for most natural-language
+  questions.
 * `data_connections`, `data_connection_capabilities` and
   `data_connection_read`: discover and read allowlisted entities from live
   operational connections through the Dooor read-only proxy.
-* `lake_*`: telemetry or high-volume analytical data through curated tools,
-  raw browse, catalog discovery and read-only SQL.
-* `lake_code_*`: search or page through indexed legacy business-rule source
-  code.
+* `lake_*`: analytical data through curated tools, raw browse, catalog
+  discovery and read-only SQL, only when the active product advertises them.
+* `lake_code_*`: search or page through indexed business-rule source code, only
+  when the active product advertises them.
 
 ## Two ways to connect
 
