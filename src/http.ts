@@ -36,7 +36,11 @@ const BASE_URL = process.env.DOOOR_BASE_URL || "https://api.os.dooor.ai/v1";
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = "0.0.0.0";
 const MAX_BODY_BYTES = 1024 * 1024;
-const MCP_REQUEST_TIMEOUT_MS = 120_000;
+// The backend data agent owns a 240 s wall-clock budget. Keep the MCP request
+// alive long enough for a hard investigation, with headroom below the 300 s
+// Cloud Run request boundary used by the existing hosted service.
+const MCP_REQUEST_TIMEOUT_MS = 280_000;
+const UPSTREAM_REQUEST_TIMEOUT_MS = 270_000;
 const MAX_CONCURRENT_REQUESTS = 32;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 // Best-effort process-local defense. The backend owns authoritative global
@@ -249,7 +253,7 @@ async function handleMcpPost(
   // Build a fresh, per-request client + server bound to THIS key.
   const api = new DooorApiClient(BASE_URL, apiKey, undefined, {
     signal: requestController.signal,
-    requestTimeoutMs: MCP_REQUEST_TIMEOUT_MS,
+    requestTimeoutMs: UPSTREAM_REQUEST_TIMEOUT_MS,
   });
   try {
     await api.resolveWorkspace();

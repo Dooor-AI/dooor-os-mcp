@@ -80,7 +80,77 @@ const TOOL_FAMILIES = [
   },
 ] as const;
 
-async function probe<T>(name: string, fn: () => Promise<T>) {
+type CapabilityProbe<T> =
+  | { name: string; ok: true; data: T }
+  | {
+      name: string;
+      ok: false;
+      error: string;
+      correlationId: string;
+    };
+
+type ProductCapabilityShape = {
+  key?: unknown;
+  family?: unknown;
+  mcpTools?: unknown;
+};
+
+function productCapabilitySummary(payload: unknown): {
+  keys: string[];
+  families: string[];
+  mcpTools: string[];
+} {
+  const envelope =
+    typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)
+      : {};
+  const products = Array.isArray(envelope.products)
+    ? envelope.products
+    : Array.isArray(payload)
+      ? payload
+      : [];
+  const keys = new Set<string>();
+  const families = new Set<string>();
+  const mcpTools = new Set<string>();
+
+  for (const product of products) {
+    if (typeof product !== "object" || product === null) continue;
+    const capabilities = (product as Record<string, unknown>).capabilities;
+    if (!Array.isArray(capabilities)) continue;
+    for (const rawCapability of capabilities) {
+      if (typeof rawCapability !== "object" || rawCapability === null) continue;
+      const capability = rawCapability as ProductCapabilityShape;
+      if (typeof capability.key === "string") keys.add(capability.key);
+      if (typeof capability.family === "string") {
+        families.add(capability.family);
+      }
+      if (Array.isArray(capability.mcpTools)) {
+        for (const tool of capability.mcpTools) {
+          if (typeof tool === "string") mcpTools.add(tool);
+        }
+      }
+    }
+  }
+
+  return {
+    keys: [...keys],
+    families: [...families],
+    mcpTools: [...mcpTools],
+  };
+}
+
+function hasRows(payload: unknown): boolean {
+  if (Array.isArray(payload)) return payload.length > 0;
+  if (typeof payload !== "object" || payload === null) return false;
+  return Object.values(payload as Record<string, unknown>).some(
+    (value) => Array.isArray(value) && value.length > 0,
+  );
+}
+
+async function probe<T>(
+  name: string,
+  fn: () => Promise<T>,
+): Promise<CapabilityProbe<T>> {
   try {
     return { name, ok: true, data: await fn() };
   } catch (err) {
@@ -168,28 +238,79 @@ export function createServer(
       includeProbes: z
         .boolean()
         .optional()
-        .describe("Run lightweight read-only probes for data_sources and lake_sources. Default true."),
+        .describe("Run lightweight read-only probes only for tool families advertised by the workspace products. Default true."),
     },
     async ({ includeProbes = true }) => ({
       content: [
         {
           type: "text" as const,
           text: await call(async () => {
-            const workspace = await api.resolveWorkspace();
-            const probes = includeProbes
-              ? await Promise.all([
-                  probe("data_products", () => api.dataProducts()),
+            const [workspace, products] = await Promise.all([
+              api.resolveWorkspace(),
+              api.dataProducts(),
+            ]);
+            const productCapabilities = productCapabilitySummary(products);
+            const advertisedTools = new Set(productCapabilities.mcpTools);
+            const probes: CapabilityProbe<unknown>[] = [];
+
+            let connectionsProbe: CapabilityProbe<unknown> | undefined;
+            if (includeProbes) {
+              const requestedProbes: Promise<CapabilityProbe<unknown>>[] = [
+                probe("data_connections", () => api.dataConnections()),
+              ];
+              if (advertisedTools.has("data_sources")) {
+                requestedProbes.push(
                   probe("data_sources", () => api.dataSources()),
-                  probe("data_connections", () => api.dataConnections()),
+                );
+              }
+              if (advertisedTools.has("lake_sources")) {
+                requestedProbes.push(
                   probe("lake_sources", () => api.lakeSources()),
-                ])
-              : [];
+                );
+              }
+              probes.push(...(await Promise.all(requestedProbes)));
+              connectionsProbe = probes.find(
+                (candidate) => candidate.name === "data_connections",
+              );
+            }
+
+            const liveConnectionsAvailable = connectionsProbe?.ok
+              ? hasRows(connectionsProbe.data)
+              : undefined;
+            const toolFamilies = TOOL_FAMILIES.map((family) => {
+              if (family.family === "platform") {
+                return { ...family, availability: "available" as const };
+              }
+              if (family.family === "live_data_connections") {
+                return {
+                  ...family,
+                  availability:
+                    liveConnectionsAvailable === undefined
+                      ? ("not_probed" as const)
+                      : liveConnectionsAvailable
+                        ? ("available" as const)
+                        : ("unavailable" as const),
+                };
+              }
+              const availableTools = family.tools.filter((tool) =>
+                advertisedTools.has(tool),
+              );
+              return {
+                ...family,
+                tools: availableTools,
+                availability:
+                  availableTools.length > 0
+                    ? ("available" as const)
+                    : ("unavailable" as const),
+              };
+            });
 
             return {
               server: "dooor-os",
               version: "0.1.0",
               workspace,
-              toolFamilies: TOOL_FAMILIES,
+              productCapabilities,
+              toolFamilies,
               probes,
             };
           }),
@@ -1378,9 +1499,12 @@ export function createServer(
 
   server.tool(
     "data_table",
-    "Preview rows from one source exposed by the active data product provider. Read-only.",
+    "Preview rows from one source exposed by the active data product provider. Call data_products first and use this tool only when data_table is advertised by an enabled capability. Read-only.",
     {
-      key: z.enum(["omie", "jira", "clientes", "installer"]).describe("Which source to preview"),
+      key: z
+        .string()
+        .min(1)
+        .describe("Provider-defined source key. Discover valid keys with data_sources."),
       limit: z.number().optional().describe("Max rows (default 25, max 100)"),
     },
     async ({ key, limit }) => ({

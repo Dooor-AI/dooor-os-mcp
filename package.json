@@ -21,6 +21,7 @@
     "dev": "tsc --watch",
     "test": "npm run build && node --test dist/*.test.js",
     "typecheck": "tsc --noEmit",
+    "prestart": "npm run build",
     "start": "node dist/index.js",
     "start:http": "node dist/http.js"
   },
