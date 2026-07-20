@@ -7,11 +7,33 @@ interface RequestContext {
 
 const requestContext = new AsyncLocalStorage<RequestContext>();
 
-/** Sanitized upstream failure. Response bodies are deliberately discarded. */
+/** Strip anything credential-shaped and bound the length of untrusted text. */
+export function redactSensitive(raw: string, maxLength = 1_000): string {
+  return raw
+    .replace(/dor_sk_[A-Za-z0-9._~-]+/g, "[REDACTED_API_KEY]")
+    .replace(/(authorization|x-api-key)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .slice(0, maxLength);
+}
+
+/**
+ * Sanitized upstream failure.
+ *
+ * Bodies of 5xx responses are deliberately discarded: a server fault can carry
+ * a stack trace, a connection string or a secret, and none of that belongs in a
+ * client-facing message. A 4xx is different in kind, it describes what the
+ * caller got wrong, so the caller is exactly who needs to read it. Only that
+ * class of response may supply `detail`, and only after redaction.
+ */
 export class DooorApiRequestError extends Error {
-  constructor(readonly status: number) {
+  readonly detail?: string;
+
+  constructor(readonly status: number, detail?: string) {
     super("Dooor API request failed");
     this.name = "DooorApiRequestError";
+    if (detail && status < 500) {
+      const clean = redactSensitive(detail, 300).trim();
+      if (clean) this.detail = clean;
+    }
   }
 }
 
@@ -43,6 +65,9 @@ export function publicErrorMessage(error: unknown): string {
   }
   if (error.status === 429) return "Backend rate limit exceeded. Retry later";
   if (error.status >= 500) return "Backend service is unavailable";
+  // A rejected request is the caller's to fix, so say what was wrong with it.
+  if (error.detail) return error.detail;
+  if (error.status === 400) return "Request was rejected as invalid";
   return "Request failed";
 }
 
@@ -63,7 +88,10 @@ export function publicFailure(
  */
 export function safeErrorSummary(error: unknown): string {
   if (error instanceof DooorApiRequestError) {
-    return `${error.name} status=${error.status}`;
+    const base = `${error.name} status=${error.status}`;
+    // Already redacted and bounded by the constructor, and only ever set for
+    // a 4xx, so this cannot reintroduce a server-side payload into the logs.
+    return error.detail ? `${base} detail=${error.detail}` : base;
   }
 
   const raw =
@@ -73,10 +101,7 @@ export function safeErrorSummary(error: unknown): string {
         ? error
         : "Unknown error";
 
-  return raw
-    .replace(/dor_sk_[A-Za-z0-9._~-]+/g, "[REDACTED_API_KEY]")
-    .replace(/(authorization|x-api-key)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
-    .slice(0, 1_000);
+  return redactSensitive(raw);
 }
 
 export function logInternalError(

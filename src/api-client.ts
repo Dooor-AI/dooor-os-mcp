@@ -1,6 +1,37 @@
 import { DooorApiRequestError } from "./error-handling.js";
 
 /**
+ * Pulls the human-readable reason out of a 4xx body. NestJS answers with
+ * `{ message }` (a string, or an array when class-validator rejects a DTO),
+ * but the body is untrusted, so anything unparseable degrades to no detail
+ * rather than to raw text being forwarded.
+ */
+async function readErrorDetail(res: Response): Promise<string | undefined> {
+  let raw: string;
+  try {
+    raw = await res.text();
+  } catch {
+    return undefined;
+  }
+  if (!raw) return undefined;
+
+  try {
+    const parsed = JSON.parse(raw) as { message?: unknown; error?: unknown };
+    const candidate = parsed.message ?? parsed.error;
+    if (typeof candidate === "string") return candidate;
+    if (Array.isArray(candidate)) {
+      const parts = candidate.filter(
+        (item): item is string => typeof item === "string",
+      );
+      if (parts.length) return parts.join("; ");
+    }
+  } catch {
+    // Not JSON. Fall through: a bare body is not trusted enough to forward.
+  }
+  return undefined;
+}
+
+/**
  * Lightweight HTTP client for Dooor OS REST API.
  * All methods return parsed JSON or throw on non-2xx.
  */
@@ -81,8 +112,14 @@ export class DooorApiClient {
     });
 
     if (!res.ok) {
-      await res.body?.cancel().catch(() => undefined);
-      throw new DooorApiRequestError(res.status);
+      if (res.status >= 500) {
+        // Server faults may carry a stack trace or a secret: never read them.
+        await res.body?.cancel().catch(() => undefined);
+        throw new DooorApiRequestError(res.status);
+      }
+      // A 4xx describes what the caller got wrong, and the caller is who needs
+      // to read it. DooorApiRequestError redacts before retaining anything.
+      throw new DooorApiRequestError(res.status, await readErrorDetail(res));
     }
 
     if (res.status === 204) return {} as T;
