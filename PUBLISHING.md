@@ -9,14 +9,31 @@ Eles não têm e não devem ter acesso a este monorepo privado
 (`Dooor-AI/dooor-os`). Por isso, qualquer instrução de setup do MCP que sair
 para fora aponta para o repositório público, nunca para o `dooor-os`.
 
-## Onde ficam as configs e o código
+## Onde fica o código: existe um repositório só
 
-* Código-fonte de desenvolvimento: esta pasta (`dooor-os/dooor-os-mcp/`).
-* Espelho público: `Dooor-AI/dooor-os-mcp`.
+**Este repositório é a única fonte da verdade.** Dentro do monorepo privado
+`Dooor-AI/dooor-os`, o diretório `dooor-os-mcp/` é um **git submodule** que
+aponta para cá, do mesmo jeito que `dooor-os-backend` e `dooor-os-frontend`.
+Não existe cópia paralela para manter em sincronia, e não existe mais nenhum
+passo de `rsync`.
 
-Sempre que mexer no MCP, incluindo tools novas, mudança de client ou env vars,
-atualize o repositório público. O publish não pode conter segredos: o MCP lê
-`DOOOR_API_KEY` do ambiente, nunca de código.
+Toda alteração no MCP nasce aqui, em PR contra a `main` deste repositório. O
+monorepo só acompanha o ponteiro do submodule:
+
+```bash
+# no monorepo, depois que o PR daqui foi mergeado
+cd dooor-os-mcp && git pull origin main && cd ..
+git add dooor-os-mcp && git commit -m "chore(mcp): bump submodule"
+```
+
+O publish não pode conter segredos: o MCP lê `DOOOR_API_KEY` do ambiente,
+nunca de código.
+
+> **Por que essa regra existe.** Até 20/07/2026 esta pasta era uma cópia comum
+> dentro do monorepo, sincronizada à mão. As duas cópias divergiram nas duas
+> direções e um deploy tirado da cópia errada subiu um build sem o gating de
+> tool registry por workspace, que precisou de rollback. Uma cópia editável, um
+> repositório, um deploy.
 
 O health check externo do servidor hospedado é `GET /health`. O endpoint
 principal MCP é `POST /mcp`.
@@ -47,26 +64,34 @@ IP de origem, pois proxies podem compartilhar o mesmo IP entre clientes. Esse
 limite vale somente para o processo ou instância atual. O backend do Dooor é a
 fonte autoritativa dos limites e quotas globais entre todas as instâncias.
 
-## Como sincronizar para o público
+## Deploy do servidor hospedado
 
-A partir desta pasta, copie os arquivos versionáveis para um clone do
-repositório público, sem `node_modules/`, `dist/` e `.git/`, e faça push:
+O serviço `dooor-mcp` no Cloud Run **não tem trigger de CI**: o deploy é
+manual, a partir de um checkout deste repositório. Como este é o único
+repositório do MCP, não há mais como deployar a partir da cópia errada.
 
 ```bash
-rsync -a --delete \
-  --exclude node_modules --exclude dist --exclude .git \
-  /caminho/dooor-os/dooor-os-mcp/ ./
-git add -A
-git commit -m "sync: <descricao>"
-git push
+git clone https://github.com/Dooor-AI/dooor-os-mcp.git && cd dooor-os-mcp
+npm test   # obrigatorio antes de deployar
+REGION="$(gcloud run services list --project=dooor-core --platform=managed \
+  --filter='metadata.name=dooor-mcp' --format='value(region)')"
+gcloud run deploy dooor-mcp --source . --region "$REGION" --project dooor-core \
+  --allow-unauthenticated --port 8080 --memory 512Mi --cpu 1 \
+  --min-instances 0 --max-instances 4 \
+  --set-env-vars DOOOR_BASE_URL=https://api.os.dooor.ai/v1
 ```
 
-No `package.json` público, `private` fica `false` e há campos
-`repository`/`homepage` apontando para o repositório público.
+Depois do deploy, confirme `GET /health` em `https://mcp.dooor.ai/health` e que
+o tráfego foi para a revisão nova:
 
-## Recomendado
+```bash
+gcloud run services describe dooor-mcp --project dooor-core \
+  --region "$REGION" --format='value(status.traffic)'
+```
 
-Para eliminar drift entre esta pasta e o repositório público, converter
-`dooor-os-mcp` em git submodule apontando para `Dooor-AI/dooor-os-mcp`,
-como já são `dooor-os-backend` e `dooor-os-frontend`. Enquanto isso não for
-feito, vale a sincronização manual acima.
+Se o tráfego estiver fixado numa revisão anterior, por exemplo depois de um
+rollback, o deploy cria a revisão sem servi-la; nesse caso rode
+`gcloud run services update-traffic dooor-mcp --to-latest`.
+
+No `package.json`, `private` fica `false` e há campos `repository`/`homepage`
+apontando para este repositório.
