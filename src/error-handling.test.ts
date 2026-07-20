@@ -139,6 +139,24 @@ test("never retains a detail for a server fault", () => {
   assert.equal(error.detail, undefined);
 });
 
+test("surfaces the redacted governance reason of a 403", () => {
+  const error = new DooorApiRequestError(
+    403,
+    "A chave de API não cobre todas as fontes dos dados derivados solicitados.",
+  );
+
+  assert.equal(
+    publicErrorMessage(error),
+    "A chave de API não cobre todas as fontes dos dados derivados solicitados.",
+  );
+});
+
+test("falls back to the generic message for a 403 without detail", () => {
+  const error = new DooorApiRequestError(403);
+
+  assert.equal(publicErrorMessage(error), "Request is not authorized");
+});
+
 test("keeps authorization-shaped errors generic rather than echoing the body", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>

@@ -56,8 +56,14 @@ export function currentCorrelationId(): string {
 export function publicErrorMessage(error: unknown): string {
   if (!(error instanceof DooorApiRequestError)) return "Request failed";
 
-  if (error.status === 401 || error.status === 403) {
+  if (error.status === 401) {
     return "Request is not authorized";
+  }
+  if (error.status === 403) {
+    // A 403 from the backend is a governance decision (scope, source coverage,
+    // lineage) whose reason the caller must read to fix their setup. Masking it
+    // sent a real client chasing "missing scopes" that were never the problem.
+    return error.detail ?? "Request is not authorized";
   }
   if (error.status === 404) return "Requested resource was not found";
   if (error.status === 409) {
