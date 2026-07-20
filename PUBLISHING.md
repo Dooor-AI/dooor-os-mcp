@@ -52,8 +52,12 @@ quando o status é `4xx`, sempre redigida (chaves `dor_sk_*` e headers de
 autorização são mascarados) e truncada em 300 caracteres na própria construção
 do erro, de modo que nenhum ponto de chamada consegue reter texto não
 sanitizado. Body que não estiver no formato JSON esperado é descartado em vez
-de repassado cru, e `401`, `403`, `404`, `409` e `429` mantêm mensagem genérica
-para que uma falha de autorização nunca ecoe o texto do upstream.
+de repassado cru, e `401`, `404`, `409` e `429` mantêm mensagem genérica
+para que uma falha de autenticação nunca ecoe o texto do upstream. O `403` é a
+exceção deliberada: ele carrega uma decisão de governança do backend (scope,
+cobertura de fontes, linhagem) que o chamador precisa ler para corrigir a
+própria configuração, então a razão redigida é repassada; sem detail, cai na
+mensagem genérica.
 
 Falhas públicas recebem um correlation ID criado pelo próprio servidor e
 enviado também no header `X-Correlation-Id`. IDs enviados pelo cliente não são
