@@ -28,7 +28,10 @@ async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
   }
 }
 
-async function callCapabilities(api: Partial<DooorApiClient>) {
+async function callCapabilities(
+  api: Partial<DooorApiClient>,
+  includeProbes?: boolean,
+) {
   const server = createServer(api as DooorApiClient);
   const client = new Client(
     { name: "dooor-mcp-capabilities-test", version: "1.0.0" },
@@ -42,7 +45,7 @@ async function callCapabilities(api: Partial<DooorApiClient>) {
     await client.connect(clientTransport);
     const response = await client.callTool({
       name: "capabilities",
-      arguments: { includeProbes: true },
+      arguments: includeProbes === undefined ? {} : { includeProbes },
     });
     const content = (
       response as { content: Array<{ type: string; text?: string }> }
@@ -57,7 +60,7 @@ async function callCapabilities(api: Partial<DooorApiClient>) {
         tools: string[];
         availability: string;
       }>;
-      probes: Array<{ name: string; ok: boolean }>;
+      probes: Array<{ name: string; ok: boolean; data?: unknown }>;
     };
   } finally {
     await Promise.allSettled([client.close(), server.close()]);
@@ -130,37 +133,40 @@ test("hosted registry fails closed when no product tools are advertised", async 
 
 test("capabilities probes only families advertised by the active product", async () => {
   let lakeProbeCount = 0;
-  const result = await callCapabilities({
-    resolveWorkspace: async () => ({
-      workspaceId: "ws-creator",
-      workspaceName: "Workspace",
-      scopes: ["data-sources:read"],
-    }),
-    dataProducts: async () => ({
-      products: [
-        {
-          capabilities: [
-            {
-              key: "business-data",
-              family: "data",
-              mcpTools: [
-                "data_overview",
-                "data_sources",
-                "data_sql",
-                "data_ask",
-              ],
-            },
-          ],
-        },
-      ],
-    }),
-    dataSources: async () => [{ key: "deal_current" }],
-    dataConnections: async () => [{ id: "source-1" }],
-    lakeSources: async () => {
-      lakeProbeCount += 1;
-      throw new Error("lake should not be probed");
+  const result = await callCapabilities(
+    {
+      resolveWorkspace: async () => ({
+        workspaceId: "ws-creator",
+        workspaceName: "Workspace",
+        scopes: ["data-sources:read"],
+      }),
+      dataProducts: async () => ({
+        products: [
+          {
+            capabilities: [
+              {
+                key: "business-data",
+                family: "data",
+                mcpTools: [
+                  "data_overview",
+                  "data_sources",
+                  "data_sql",
+                  "data_ask",
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      dataSources: async () => [{ key: "deal_current" }],
+      dataConnections: async () => [{ id: "source-1" }],
+      lakeSourcesSummary: async () => {
+        lakeProbeCount += 1;
+        throw new Error("lake should not be probed");
+      },
     },
-  });
+    true,
+  );
 
   assert.equal(lakeProbeCount, 0);
   assert.deepEqual(
@@ -176,4 +182,151 @@ test("capabilities probes only families advertised by the active product", async
       ?.availability,
     "unavailable",
   );
+});
+
+test("capabilities skips probes by default", async () => {
+  let probeCalls = 0;
+  const result = await callCapabilities({
+    resolveWorkspace: async () => ({
+      workspaceId: "ws-1",
+      workspaceName: "Workspace",
+      scopes: ["data-sources:read"],
+    }),
+    dataProducts: async () => ({ products: [] }),
+    dataConnections: async () => {
+      probeCalls += 1;
+      return [];
+    },
+  });
+
+  assert.equal(probeCalls, 0);
+  assert.deepEqual(result.probes, []);
+});
+
+test("capabilities probes expose only compact counts, status and freshness", async () => {
+  const result = await callCapabilities(
+    {
+      resolveWorkspace: async () => ({
+        workspaceId: "ws-fleet",
+        workspaceName: "Workspace",
+        scopes: ["data-sources:read"],
+      }),
+      dataProducts: async () => ({
+        products: [
+          {
+            capabilities: [
+              {
+                key: "business-data",
+                family: "data",
+                mcpTools: ["data_sources", "lake_sources"],
+              },
+            ],
+          },
+        ],
+      }),
+      dataConnections: async () => [
+        {
+          id: "source-1",
+          status: "CONNECTED",
+          config: { secretMetadata: "must-not-leak" },
+          updatedAt: "2026-07-22T12:00:00.000Z",
+        },
+      ],
+      dataSources: async () => [
+        {
+          key: "omie",
+          status: "connected",
+          recordCount: 42,
+          lastSyncAt: "2026-07-22T11:00:00.000Z",
+          meta: { privateDetail: "must-not-leak" },
+        },
+      ],
+      lakeSourcesSummary: async () => ({
+        layers: [{ key: "gold" }],
+        totals: {
+          clients: 20,
+          vehicleFiles: 1500,
+          otherTables: 15025,
+          geofenceTables: 5360,
+        },
+        freshness: {
+          goldMaxDay: "2026-06-24",
+          lagDays: 28,
+          observedAt: "2026-07-22T12:00:00.000Z",
+        },
+        clients: [{ id: "private-client", name: "must-not-leak" }],
+      }),
+    },
+    true,
+  );
+
+  const serialized = JSON.stringify(result.probes);
+  assert.equal(serialized.includes("must-not-leak"), false);
+  assert.equal(serialized.includes("private-client"), false);
+  assert.deepEqual(
+    result.probes.map((probe) => probe.name).sort(),
+    ["data_connections", "data_sources", "lake_sources"],
+  );
+  assert.ok(serialized.length < 2_000);
+});
+
+test("lake_sources is bounded by default and supports the compact summary", async () => {
+  let received:
+    | { page: number; limit: number; tableLimit: number; search?: string }
+    | undefined;
+  let summaryCalls = 0;
+  const api = {
+    lakeSources: async (params: {
+      page: number;
+      limit: number;
+      tableLimit: number;
+      search?: string;
+    }) => {
+      received = params;
+      return { layers: [], clients: [], meta: params };
+    },
+    lakeSourcesSummary: async () => {
+      summaryCalls += 1;
+      return {
+        layers: [],
+        totals: {
+          clients: 20,
+          vehicleFiles: 1500,
+          otherTables: 15025,
+          geofenceTables: 5360,
+        },
+        freshness: { goldMaxDay: "2026-06-24", lagDays: 28 },
+        clients: [],
+      };
+    },
+  } as Partial<DooorApiClient>;
+  const server = createServer(api as DooorApiClient, {
+    enabledProductTools: new Set(["lake_sources"]),
+  });
+  const client = new Client(
+    { name: "dooor-mcp-lake-sources-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    await client.callTool({ name: "lake_sources", arguments: {} });
+    assert.deepEqual(received, {
+      page: 1,
+      limit: 10,
+      tableLimit: 50,
+      search: undefined,
+    });
+
+    await client.callTool({
+      name: "lake_sources",
+      arguments: { summary: true },
+    });
+    assert.equal(summaryCalls, 1);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
 });

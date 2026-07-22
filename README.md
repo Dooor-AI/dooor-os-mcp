@@ -16,8 +16,9 @@ product-specific tools or schemas from appearing in another client's session.
 ## Tool families
 
 Start with `capabilities` when connecting a new client. It returns the active
-workspace, API key scopes, tool families and optional read-only probes for the
-connected data sources.
+workspace, API key scopes and tool families. Read-only probes are disabled by
+default; opt in with `includeProbes=true` to receive compact counts, status and
+freshness only.
 
 * `capabilities`: workspace whoami, scopes, family map and source probes.
 * Platform tools: apps, deploys, git repos, env vars, databases, agents and
@@ -30,8 +31,10 @@ connected data sources.
 * `data_connections`, `data_connection_capabilities` and
   `data_connection_read`: discover and read allowlisted entities from live
   operational connections through the Dooor read-only proxy.
-* `lake_*`: analytical data through curated tools, raw browse, catalog
-  discovery and read-only SQL, only when the active product advertises them.
+* `lake_*`: analytical data through curated tools, paginated source discovery,
+  raw browse, catalog discovery and read-only SQL, only when the active product
+  advertises them. `lake_sources` defaults to 10 clients and 50 tables per
+  category/client; pass `summary=true` for counts and Gold freshness only.
 * `lake_code_*`: search or page through indexed business-rule source code, only
   when the active product advertises them.
 
