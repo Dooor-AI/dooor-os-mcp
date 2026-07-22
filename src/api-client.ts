@@ -236,8 +236,22 @@ export class DooorApiClient {
   lakeDashboard(prompt: string) {
     return this.post(this.ws("/data/lake/dashboard"), { prompt });
   }
-  lakeSources() {
-    return this.get(this.ws("/data/lake/sources"));
+  lakeSources(params: {
+    page: number;
+    limit: number;
+    tableLimit: number;
+    search?: string;
+  }) {
+    const qs = new URLSearchParams({
+      page: String(params.page),
+      limit: String(params.limit),
+      tableLimit: String(params.tableLimit),
+    });
+    if (params.search) qs.set("search", params.search);
+    return this.get(this.ws(`/data/lake/sources?${qs.toString()}`));
+  }
+  lakeSourcesSummary() {
+    return this.get(this.ws("/data/lake/sources/summary"));
   }
   lakeBrowse(params: {
     layer: string;

@@ -142,9 +142,90 @@ function productCapabilitySummary(payload: unknown): {
 function hasRows(payload: unknown): boolean {
   if (Array.isArray(payload)) return payload.length > 0;
   if (typeof payload !== "object" || payload === null) return false;
+  const count = (payload as Record<string, unknown>).count;
+  if (typeof count === "number") return count > 0;
   return Object.values(payload as Record<string, unknown>).some(
     (value) => Array.isArray(value) && value.length > 0,
   );
+}
+
+function collectionRows(payload: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(payload)) {
+    return payload.filter(
+      (row): row is Record<string, unknown> =>
+        typeof row === "object" && row !== null && !Array.isArray(row),
+    );
+  }
+  if (typeof payload !== "object" || payload === null) return [];
+  const envelope = payload as Record<string, unknown>;
+  for (const key of ["data", "items", "sources", "connections"]) {
+    if (Array.isArray(envelope[key])) return collectionRows(envelope[key]);
+  }
+  return [];
+}
+
+function compactCollectionProbe(payload: unknown): {
+  count: number;
+  statuses: Record<string, number>;
+  totalRecords: number | null;
+  freshness: { latest: string | null; oldest: string | null };
+} {
+  const rows = collectionRows(payload);
+  const statuses: Record<string, number> = {};
+  let totalRecords = 0;
+  let hasRecordCount = false;
+  const timestamps: string[] = [];
+
+  for (const row of rows) {
+    const status = typeof row.status === "string" ? row.status : "unknown";
+    statuses[status] = (statuses[status] ?? 0) + 1;
+    if (typeof row.recordCount === "number") {
+      totalRecords += row.recordCount;
+      hasRecordCount = true;
+    }
+    for (const key of ["lastSyncAt", "lastQueryAt", "lastTestedAt", "updatedAt"]) {
+      const value = row[key];
+      if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {
+        timestamps.push(value);
+        break;
+      }
+    }
+  }
+  timestamps.sort((left, right) => Date.parse(left) - Date.parse(right));
+  return {
+    count: rows.length,
+    statuses,
+    totalRecords: hasRecordCount ? totalRecords : null,
+    freshness: {
+      latest: timestamps.at(-1) ?? null,
+      oldest: timestamps[0] ?? null,
+    },
+  };
+}
+
+function compactLakeProbe(payload: unknown): Record<string, unknown> {
+  if (typeof payload !== "object" || payload === null) {
+    return { count: 0, totals: {}, freshness: null, layerCount: 0 };
+  }
+  const summary = payload as Record<string, unknown>;
+  const totals =
+    typeof summary.totals === "object" && summary.totals !== null
+      ? summary.totals
+      : {};
+  const freshness =
+    typeof summary.freshness === "object" && summary.freshness !== null
+      ? summary.freshness
+      : null;
+  const count =
+    typeof (totals as Record<string, unknown>).clients === "number"
+      ? ((totals as Record<string, unknown>).clients as number)
+      : 0;
+  return {
+    count,
+    totals,
+    freshness,
+    layerCount: Array.isArray(summary.layers) ? summary.layers.length : 0,
+  };
 }
 
 async function probe<T>(
@@ -234,9 +315,9 @@ export function createServer(
       includeProbes: z
         .boolean()
         .optional()
-        .describe("Run lightweight read-only probes only for tool families advertised by the workspace products. Default true."),
+        .describe("Run compact read-only count/status/freshness probes only for tool families advertised by the workspace products. Default false."),
     },
-    async ({ includeProbes = true }) => ({
+    async ({ includeProbes = false }) => ({
       content: [
         {
           type: "text" as const,
@@ -252,16 +333,22 @@ export function createServer(
             let connectionsProbe: CapabilityProbe<unknown> | undefined;
             if (includeProbes) {
               const requestedProbes: Promise<CapabilityProbe<unknown>>[] = [
-                probe("data_connections", () => api.dataConnections()),
+                probe("data_connections", async () =>
+                  compactCollectionProbe(await api.dataConnections()),
+                ),
               ];
               if (advertisedTools.has("data_sources")) {
                 requestedProbes.push(
-                  probe("data_sources", () => api.dataSources()),
+                  probe("data_sources", async () =>
+                    compactCollectionProbe(await api.dataSources()),
+                  ),
                 );
               }
               if (advertisedTools.has("lake_sources")) {
                 requestedProbes.push(
-                  probe("lake_sources", () => api.lakeSources()),
+                  probe("lake_sources", async () =>
+                    compactLakeProbe(await api.lakeSourcesSummary()),
+                  ),
                 );
               }
               probes.push(...(await Promise.all(requestedProbes)));
@@ -1595,10 +1682,23 @@ export function createServer(
   if (productToolEnabled("lake_sources")) {
     server.tool(
       "lake_sources",
-      "List the raw and curated layers exposed by the active product's analytical lake. Use this to discover valid source, layer and table identifiers before calling lake_browse. Read-only.",
-      {},
-      async () => ({
-        content: [{ type: "text" as const, text: await call(() => api.lakeSources()) }],
+      "Page or summarize the raw and curated layers exposed by the active product's analytical lake. Results are bounded by client and table limits. Use this to discover valid source, layer and table identifiers before calling lake_browse. Read-only.",
+      {
+        summary: z.boolean().optional().describe("Return counts and Gold freshness only. Default false."),
+        page: z.number().int().min(1).optional().describe("Client page. Default 1."),
+        limit: z.number().int().min(1).max(50).optional().describe("Clients per page. Default 10, maximum 50."),
+        tableLimit: z.number().int().min(1).max(200).optional().describe("Tables per category and client. Default 50, maximum 200."),
+        search: z.string().max(80).optional().describe("Filter by client ID/name or table name."),
+      },
+      async ({ summary = false, page = 1, limit = 10, tableLimit = 50, search }) => ({
+        content: [{
+          type: "text" as const,
+          text: await call(() =>
+            summary
+              ? api.lakeSourcesSummary()
+              : api.lakeSources({ page, limit, tableLimit, search }),
+          ),
+        }],
       }),
     );
   }
