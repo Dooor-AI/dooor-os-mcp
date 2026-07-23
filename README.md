@@ -143,8 +143,11 @@ included for container deploys (e.g. Cloud Run); it builds and runs
 
 ### Error handling and rate limits
 
-The hosted server does not return upstream response bodies, stack traces or
-internal exception messages. Public failures include a server-generated
+The hosted server does not return server-fault response bodies, stack traces,
+internal exception messages, physical relation names, internal component
+identifiers, adapter/runtime/provider identifiers, or infrastructure details.
+Safe and neutral `4xx` validation or governance reasons remain available so
+callers can correct their requests. Public failures include a server-generated
 correlation ID, also returned in the `X-Correlation-Id` response header. Share
 that ID with the operator when troubleshooting. Caller-provided request IDs are
 not trusted or echoed.
