@@ -133,6 +133,49 @@ test("redacts a credential that appears inside a 4xx body", () => {
   assert.doesNotMatch(safeErrorSummary(error), /dor_sk_fakeKeyForRedactionTest/);
 });
 
+test("does not retain physical relations or internal component names from a 4xx", () => {
+  const details = [
+    "[InternalLakeCH] read query error on relation tenant_conn_source_table",
+    "relation business_records_current does not exist",
+  ];
+
+  for (const detail of details) {
+    const error = new DooorApiRequestError(400, detail);
+    assert.equal(error.detail, undefined, detail);
+    assert.equal(publicErrorMessage(error), "Request was rejected as invalid");
+    assert.doesNotMatch(
+      safeErrorSummary(error),
+      /InternalLakeCH|tenant_conn_source_table|business_records_current/,
+    );
+  }
+});
+
+test("does not retain curated physical table names from a governance error", () => {
+  const error = new DooorApiRequestError(
+    403,
+    "Relação gold_finance_current não permitida para esta chave.",
+  );
+
+  assert.equal(error.detail, undefined);
+  assert.equal(publicErrorMessage(error), "Request is not authorized");
+  assert.doesNotMatch(safeErrorSummary(error), /gold_finance_current/);
+});
+
+test("does not retain adapter, runtime, provider or infrastructure metadata", () => {
+  const details = [
+    "adapter fleet-ops-adapter indisponível",
+    "primaryRuntime=warehouse-provider",
+    "host=private-db.internal port=5432",
+    "falha em clickhouse://private-db.internal/analytics",
+  ];
+
+  for (const detail of details) {
+    const error = new DooorApiRequestError(400, detail);
+    assert.equal(error.detail, undefined, detail);
+    assert.equal(publicErrorMessage(error), "Request was rejected as invalid");
+  }
+});
+
 test("never retains a detail for a server fault", () => {
   const error = new DooorApiRequestError(503, "internal stack trace");
 

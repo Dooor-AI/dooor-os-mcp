@@ -15,14 +15,52 @@ export function redactSensitive(raw: string, maxLength = 1_000): string {
     .slice(0, maxLength);
 }
 
+/*
+ * A public 4xx can explain a caller mistake, but it must not expose the
+ * backend's physical layout. These patterns intentionally describe shapes,
+ * not customer names, so this public repository never becomes a registry of
+ * private tenants.
+ */
+const INTERNAL_DETAIL_PATTERNS: readonly RegExp[] = [
+  /\[[^\]\r\n]{1,80}(?:ch|adapter|provider|runtime|service|repository|client|driver|connector)\]/i,
+  /\b[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*(?:[-_](?:adapter|runtime|provider|connector|driver|repository))\b/i,
+  /\b(?:gold|silver|bronze|landing|staging|raw)_[a-z0-9_]+\b/i,
+  /\b[a-z][a-z0-9]*_conn_[a-z0-9_]+\b/i,
+  /\b(?:relation|table|view|schema|database|dataset)\s+["'`][^"'`\r\n]{1,128}["'`]/i,
+  /\b(?:relation|table|view)\s+[a-z][a-z0-9]*(?:[._][a-z0-9]+)+\b/i,
+  /\b(?:adapterKey|primaryRuntime|connectionString|databaseUrl|dataSourceId)\b/i,
+  /\b(?:https?|postgres(?:ql)?|clickhouse|redis|mongodb|mysql):\/\/[^\s]+/i,
+  /\b(?:host|hostname|port|database|schema|dataset|project(?:_id)?)\s*[:=]\s*["']?[^\s,;]+/i,
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
+  /\b[a-z0-9.-]+\.internal\b/i,
+  /\b(?:clickhouse|postgres(?:ql)?|redis|cloud\s*run|cloud\s*sql|kubernetes|k8s|minio|qdrant)\b/i,
+];
+
+/**
+ * Keep a useful validation or governance reason only when it is neutral.
+ * Discard the whole detail when any internal marker appears: partial
+ * replacement can leave an identifying prefix or enough context to infer it.
+ */
+function sanitizePublicDetail(
+  raw: string,
+  maxLength = 300,
+): string | undefined {
+  const clean = redactSensitive(raw, maxLength).trim();
+  if (!clean) return undefined;
+  if (INTERNAL_DETAIL_PATTERNS.some((pattern) => pattern.test(clean))) {
+    return undefined;
+  }
+  return clean;
+}
+
 /**
  * Sanitized upstream failure.
  *
  * Bodies of 5xx responses are deliberately discarded: a server fault can carry
  * a stack trace, a connection string or a secret, and none of that belongs in a
  * client-facing message. A 4xx is different in kind, it describes what the
- * caller got wrong, so the caller is exactly who needs to read it. Only that
- * class of response may supply `detail`, and only after redaction.
+ * caller got wrong, so the caller is exactly who needs to read it. Only a
+ * neutral detail without physical or infrastructure metadata is retained.
  */
 export class DooorApiRequestError extends Error {
   readonly detail?: string;
@@ -31,7 +69,7 @@ export class DooorApiRequestError extends Error {
     super("Dooor API request failed");
     this.name = "DooorApiRequestError";
     if (detail && status < 500) {
-      const clean = redactSensitive(detail, 300).trim();
+      const clean = sanitizePublicDetail(detail);
       if (clean) this.detail = clean;
     }
   }
@@ -95,8 +133,8 @@ export function publicFailure(
 export function safeErrorSummary(error: unknown): string {
   if (error instanceof DooorApiRequestError) {
     const base = `${error.name} status=${error.status}`;
-    // Already redacted and bounded by the constructor, and only ever set for
-    // a 4xx, so this cannot reintroduce a server-side payload into the logs.
+    // Already sanitized and bounded by the constructor, and only ever set for
+    // a 4xx, so this cannot reintroduce an upstream internal identifier.
     return error.detail ? `${base} detail=${error.detail}` : base;
   }
 

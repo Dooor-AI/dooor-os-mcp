@@ -48,16 +48,16 @@ Respostas `4xx` são tratadas de forma diferente, e de propósito: elas descreve
 o que o chamador enviou de errado, e o chamador é justamente quem precisa ler
 aquilo. Sem isso, um erro de sintaxe numa consulta chega ao usuário como se a
 plataforma estivesse fora do ar. A mensagem do backend é repassada apenas
-quando o status é `4xx`, sempre redigida (chaves `dor_sk_*` e headers de
-autorização são mascarados) e truncada em 300 caracteres na própria construção
-do erro, de modo que nenhum ponto de chamada consegue reter texto não
-sanitizado. Body que não estiver no formato JSON esperado é descartado em vez
-de repassado cru, e `401`, `404`, `409` e `429` mantêm mensagem genérica
-para que uma falha de autenticação nunca ecoe o texto do upstream. O `403` é a
-exceção deliberada: ele carrega uma decisão de governança do backend (scope,
-cobertura de fontes, linhagem) que o chamador precisa ler para corrigir a
-própria configuração, então a razão redigida é repassada; sem detail, cai na
-mensagem genérica.
+quando o status é `4xx`, é neutra e passa pela sanitização centralizada. Chaves
+`dor_sk_*` e headers de autorização são mascarados. Mensagens que contenham
+relações físicas, nomes de componentes internos, identificadores de
+adapter/runtime/provider ou detalhes de infraestrutura são descartadas por
+inteiro e substituídas pela mensagem genérica do status. As demais são
+truncadas em 300 caracteres na própria construção do erro, de modo que nenhum
+ponto de chamada consiga reter texto não sanitizado. Body fora do formato JSON
+esperado também é descartado em vez de ser repassado cru. `401`, `404`, `409` e
+`429` mantêm mensagem genérica. O `403` só carrega uma decisão de governança
+quando a razão é neutra; sem detail seguro, cai na mensagem genérica.
 
 Falhas públicas recebem um correlation ID criado pelo próprio servidor e
 enviado também no header `X-Correlation-Id`. IDs enviados pelo cliente não são
