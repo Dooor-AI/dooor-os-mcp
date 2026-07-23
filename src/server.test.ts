@@ -9,7 +9,7 @@ import {
   type CreateServerOptions,
 } from "./server.js";
 
-async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
+async function listToolDefinitions(options?: CreateServerOptions) {
   const server = createServer({} as DooorApiClient, options);
   const client = new Client(
     { name: "dooor-mcp-server-test", version: "1.0.0" },
@@ -22,10 +22,14 @@ async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const response = await client.listTools();
-    return response.tools.map((tool) => tool.name);
+    return response.tools;
   } finally {
     await Promise.allSettled([client.close(), server.close()]);
   }
+}
+
+async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
+  return (await listToolDefinitions(options)).map((tool) => tool.name);
 }
 
 async function callCapabilities(
@@ -117,6 +121,28 @@ test("hosted registry exposes only product tools advertised by the workspace", a
   assert.equal(tools.includes("data_insights"), true);
   assert.equal(tools.includes("data_table"), false);
   assert.equal(tools.some((name) => name.startsWith("lake_")), false);
+});
+
+test("data tools instruct agents to query with the advertised source key", async () => {
+  const tools = await listToolDefinitions({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set(["data_sources", "data_sql"]),
+  });
+  const dataSources = tools.find((tool) => tool.name === "data_sources");
+  const dataSql = tools.find((tool) => tool.name === "data_sql");
+
+  assert.match(dataSources?.description ?? "", /key field/i);
+  assert.match(dataSql?.description ?? "", /key field/i);
+  assert.match(
+    String(
+      (
+        dataSql?.inputSchema.properties as
+          | Record<string, { description?: string }>
+          | undefined
+      )?.sql?.description ?? "",
+    ),
+    /key field/i,
+  );
 });
 
 test("hosted registry fails closed when no product tools are advertised", async () => {

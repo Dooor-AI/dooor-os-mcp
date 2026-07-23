@@ -296,7 +296,8 @@ export function createServer(
         "API-key scopes, advertised product capabilities and connected data sources. " +
         `${productToolInstructions}\n\n` +
         "Only call a product tool that appears in this server's tool list. Product data tools are read-only, " +
-        "workspace-scoped and selected from the active product contract. Use data_sources before data_sql, " +
+        "workspace-scoped and selected from the active product contract. Use data_sources before data_sql, use " +
+        "each source's key field as the SQL relation name, never use internal or physical table metadata, " +
         "and prefer data_ask for grounded business questions. Do not infer invoice, payment, payout, cash, " +
         "revenue or causality unless the returned sources and fields explicitly support that meaning.\n\n" +
         "For live operational connections, call data_connections, then data_connection_capabilities, then " +
@@ -1604,7 +1605,7 @@ export function createServer(
   if (productToolEnabled("data_sources")) {
     server.tool(
       "data_sources",
-      "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. Use this to discover what can be queried. Read-only.",
+      "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. The key field is the only supported relation name for data_sql. Use this to discover what can be queried. Read-only.",
       {},
       async () => ({
         content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
@@ -1733,12 +1734,12 @@ export function createServer(
   if (productToolEnabled("data_sql")) {
     server.tool(
       "data_sql",
-      "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Relation names and columns are product-defined, so inspect data_products and data_sources first. Platform tables and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
+      "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Inspect data_products and data_sources first, then use only the key field returned by data_sources as each relation name. Platform tables, physical table names and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
       {
         sql: z
           .string()
           .describe(
-            "A single read-only SQL statement over relations exposed by the active data product",
+            "A single read-only SQL statement using only the key field values returned by data_sources as relation names",
           ),
       },
       async ({ sql }) => ({
