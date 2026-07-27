@@ -38,6 +38,19 @@ freshness only.
 * `lake_code_*`: search or page through indexed business-rule source code, only
   when the active product advertises them.
 
+### Data freshness contract
+
+For replicated sources, call `data_sources` during the current investigation
+and treat `lastSyncAt` as the authoritative freshness timestamp when present.
+Business dates, row `createdAt` or `updatedAt`, record insertion time, query or
+connection-test activity, and request or application logs are not proof that a
+sync ran.
+
+If the provider exposes no field explicitly labeled as freshness, report
+freshness as unknown. State the observed timestamp and age, and only call a
+source stale or failed when authoritative freshness metadata and the expected
+cadence support that conclusion.
+
 ## Two ways to connect
 
 | Mode | Transport | Where the API key comes from |

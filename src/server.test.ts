@@ -28,6 +28,24 @@ async function listToolDefinitions(options?: CreateServerOptions) {
   }
 }
 
+async function getServerInstructions(options?: CreateServerOptions) {
+  const server = createServer({} as DooorApiClient, options);
+  const client = new Client(
+    { name: "dooor-mcp-instructions-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return client.getInstructions() ?? "";
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+}
+
 async function listToolNames(options?: CreateServerOptions): Promise<string[]> {
   return (await listToolDefinitions(options)).map((tool) => tool.name);
 }
@@ -145,6 +163,39 @@ test("data tools instruct agents to query with the advertised source key", async
   );
 });
 
+test("MCP instructions make provider freshness authoritative", async () => {
+  const instructions = await getServerInstructions({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set([
+      "data_ask",
+      "data_table",
+      "data_sources",
+      "data_sql",
+    ]),
+  });
+  const tools = await listToolDefinitions({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set([
+      "data_ask",
+      "data_table",
+      "data_sources",
+      "data_sql",
+    ]),
+  });
+  const description = (name: string) =>
+    tools.find((tool) => tool.name === name)?.description ?? "";
+
+  assert.match(instructions, /data_sources\.lastSyncAt is authoritative/i);
+  assert.match(instructions, /row createdAt or updatedAt/i);
+  assert.match(instructions, /report freshness as unknown/i);
+  assert.match(instructions, /expected cadence/i);
+  assert.match(description("data_sources"), /lastSyncAt is authoritative/i);
+  assert.match(description("data_sources"), /freshness as unknown/i);
+  assert.match(description("data_sql"), /do not infer sync freshness/i);
+  assert.match(description("data_table"), /not evidence of sync freshness/i);
+  assert.match(description("data_ask"), /use data_sources instead/i);
+});
+
 test("hosted registry fails closed when no product tools are advertised", async () => {
   const tools = await listToolNames({
     localFilesystemAccess: false,
@@ -255,6 +306,7 @@ test("capabilities probes expose only compact counts, status and freshness", asy
           id: "source-1",
           status: "CONNECTED",
           config: { secretMetadata: "must-not-leak" },
+          lastTestedAt: "2026-07-22T13:00:00.000Z",
           updatedAt: "2026-07-22T12:00:00.000Z",
         },
       ],
@@ -264,7 +316,13 @@ test("capabilities probes expose only compact counts, status and freshness", asy
           status: "connected",
           recordCount: 42,
           lastSyncAt: "2026-07-22T11:00:00.000Z",
+          updatedAt: "2026-07-22T14:00:00.000Z",
           meta: { privateDetail: "must-not-leak" },
+        },
+        {
+          key: "source-without-authoritative-freshness",
+          status: "connected",
+          updatedAt: "2026-07-22T15:00:00.000Z",
         },
       ],
       lakeSourcesSummary: async () => ({
@@ -292,6 +350,27 @@ test("capabilities probes expose only compact counts, status and freshness", asy
   assert.deepEqual(
     result.probes.map((probe) => probe.name).sort(),
     ["data_connections", "data_sources", "lake_sources"],
+  );
+  assert.deepEqual(
+    result.probes.find((probe) => probe.name === "data_connections")?.data,
+    {
+      count: 1,
+      statuses: { CONNECTED: 1 },
+      totalRecords: null,
+      freshness: { latest: null, oldest: null },
+    },
+  );
+  assert.deepEqual(
+    result.probes.find((probe) => probe.name === "data_sources")?.data,
+    {
+      count: 2,
+      statuses: { connected: 2 },
+      totalRecords: 42,
+      freshness: {
+        latest: "2026-07-22T11:00:00.000Z",
+        oldest: "2026-07-22T11:00:00.000Z",
+      },
+    },
   );
   assert.ok(serialized.length < 2_000);
 });
