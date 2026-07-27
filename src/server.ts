@@ -164,7 +164,10 @@ function collectionRows(payload: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
-function compactCollectionProbe(payload: unknown): {
+function compactCollectionProbe(
+  payload: unknown,
+  freshnessKeys: readonly string[] = [],
+): {
   count: number;
   statuses: Record<string, number>;
   totalRecords: number | null;
@@ -183,7 +186,7 @@ function compactCollectionProbe(payload: unknown): {
       totalRecords += row.recordCount;
       hasRecordCount = true;
     }
-    for (const key of ["lastSyncAt", "lastQueryAt", "lastTestedAt", "updatedAt"]) {
+    for (const key of freshnessKeys) {
       const value = row[key];
       if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {
         timestamps.push(value);
@@ -285,6 +288,13 @@ export function createServer(
       ? `Workspace-advertised product tools: ${enabledProductToolNames.join(", ")}.`
       : "This workspace advertises no product-specific data tools."
     : "Call data_products to discover the workspace's product-specific data tools.";
+  const dataFreshnessInstructions =
+    "For freshness or sync-status questions, call data_sources during the current investigation. " +
+    "For replicated sources, data_sources.lastSyncAt is authoritative when present. Never infer sync " +
+    "freshness from business dates, row createdAt or updatedAt, record insertion time, query or connection " +
+    "test activity, or request and application logs. If data_sources exposes no field explicitly labeled " +
+    "as freshness, report freshness as unknown. State the observed timestamp and age; call a source stale " +
+    "or failed only when authoritative freshness metadata and the expected cadence support that conclusion.";
   const server = new McpServer(
     {
       name: "dooor-os",
@@ -300,6 +310,7 @@ export function createServer(
         "each source's key field as the SQL relation name, never use internal or physical table metadata, " +
         "and prefer data_ask for grounded business questions. Do not infer invoice, payment, payout, cash, " +
         "revenue or causality unless the returned sources and fields explicitly support that meaning.\n\n" +
+        `${dataFreshnessInstructions}\n\n` +
         "For live operational connections, call data_connections, then data_connection_capabilities, then " +
         "data_connection_read with an advertised list/get operation. Fixed source filters are authoritative, " +
         "credentials are never returned and source writes are unavailable.\n\n" +
@@ -316,7 +327,7 @@ export function createServer(
       includeProbes: z
         .boolean()
         .optional()
-        .describe("Run compact read-only count/status/freshness probes only for tool families advertised by the workspace products. Default false."),
+        .describe("Run compact read-only count/status probes, plus authoritative freshness where the provider exposes it, only for tool families advertised by the workspace products. Default false."),
     },
     async ({ includeProbes = false }) => ({
       content: [
@@ -341,7 +352,9 @@ export function createServer(
               if (advertisedTools.has("data_sources")) {
                 requestedProbes.push(
                   probe("data_sources", async () =>
-                    compactCollectionProbe(await api.dataSources()),
+                    compactCollectionProbe(await api.dataSources(), [
+                      "lastSyncAt",
+                    ]),
                   ),
                 );
               }
@@ -1575,7 +1588,7 @@ export function createServer(
   if (productToolEnabled("data_ask")) {
     server.tool(
       "data_ask",
-      "PRIMARY data tool. Ask a natural-language business question (PT-BR or EN) about the workspace's active data product and receive a grounded answer with evidence from its governed sources. Available subjects depend on the product capabilities returned by data_products. Read-only.",
+      "PRIMARY data tool. Ask a natural-language business question (PT-BR or EN) about the workspace's active data product and receive a grounded answer with evidence from its governed sources. Available subjects depend on the product capabilities returned by data_products. For freshness or sync-status questions, use data_sources instead. Read-only.",
       {
         question: z.string().describe("Business question in natural language (PT-BR or EN)"),
       },
@@ -1588,7 +1601,7 @@ export function createServer(
   if (productToolEnabled("data_table")) {
     server.tool(
       "data_table",
-      "Preview rows from one source exposed by the active data product provider. Call data_products first and use this tool only when data_table is advertised by an enabled capability. Read-only.",
+      "Preview rows from one source exposed by the active data product provider. Call data_products first and use this tool only when data_table is advertised by an enabled capability. Row timestamps and business dates are not evidence of sync freshness; use explicit freshness metadata from data_sources. Read-only.",
       {
         key: z
           .string()
@@ -1605,7 +1618,7 @@ export function createServer(
   if (productToolEnabled("data_sources")) {
     server.tool(
       "data_sources",
-      "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. The key field is the only supported relation name for data_sql. Use this to discover what can be queried. Read-only.",
+      "List the governed sources exposed by the active data product, including the metadata and statistics its provider makes available. The key field is the only supported relation name for data_sql. For replicated-source freshness, lastSyncAt is authoritative when present. If the provider exposes no field explicitly labeled as freshness, report freshness as unknown and do not claim a sync ran or failed to run. Read-only.",
       {},
       async () => ({
         content: [{ type: "text" as const, text: await call(() => api.dataSources()) }],
@@ -1734,7 +1747,7 @@ export function createServer(
   if (productToolEnabled("data_sql")) {
     server.tool(
       "data_sql",
-      "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Inspect data_products and data_sources first, then use only the key field returned by data_sources as each relation name. Platform tables, physical table names and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
+      "Run one ad-hoc read-only SQL query over the workspace-scoped business relations exposed by the active data product. Inspect data_products and data_sources first, then use only the key field returned by data_sources as each relation name. Do not infer sync freshness from business dates or row createdAt/updatedAt values; use data_sources.lastSyncAt or other provider-labeled freshness metadata. Platform tables, physical table names and mutating statements are blocked; execution and row limits are enforced server-side. Read-only.",
       {
         sql: z
           .string()
