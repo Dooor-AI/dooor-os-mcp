@@ -110,6 +110,116 @@ test("trusted local mode explicitly enables filesystem deployment tools", async 
   assert.equal(tools.includes("deploy_app_from_tarball"), true);
 });
 
+test("hosted mode registers the agent-driven upload deploy pair", async () => {
+  const tools = await listToolNames({ localFilesystemAccess: false });
+
+  assert.equal(tools.includes("deploy_app_upload_init"), true);
+  assert.equal(tools.includes("deploy_app_upload_finalize"), true);
+});
+
+test("upload init returns the presigned slot plus next steps for the agent", async () => {
+  const api = {
+    initUpload: async (appId: string, data: { sizeBytes: number; sha256?: string }) => {
+      assert.equal(appId, "app-1");
+      assert.equal(data.sizeBytes, 489);
+      assert.equal(
+        data.sha256,
+        "a".repeat(64),
+      );
+      return {
+        uploadId: "up-1",
+        bucketKey: "workspaces/ws/apps/app-1/uploads/up-1.tar.gz",
+        presignedPutUrl: "https://storage.example/put",
+        headers: { "content-type": "application/gzip" },
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        maxSizeBytes: 500 * 1024 * 1024,
+      };
+    },
+  } as Partial<DooorApiClient>;
+  const server = createServer(api as DooorApiClient, {
+    localFilesystemAccess: false,
+  });
+  const client = new Client(
+    { name: "dooor-mcp-upload-init-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "deploy_app_upload_init",
+      arguments: { appId: "app-1", sizeBytes: 489, sha256: "a".repeat(64) },
+    });
+    const text = (
+      response as { content: Array<{ type: string; text?: string }> }
+    ).content.find((item) => item.type === "text")?.text;
+    const parsed = JSON.parse(text ?? "{}");
+    assert.equal(parsed.uploadId, "up-1");
+    assert.equal(parsed.presignedPutUrl, "https://storage.example/put");
+    assert.equal(Array.isArray(parsed.nextSteps), true);
+    assert.match(parsed.nextSteps.join(" "), /PUT/);
+    assert.match(parsed.nextSteps.join(" "), /deploy_app_upload_finalize/);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
+test("upload finalize completes the upload then triggers an UPLOAD deploy", async () => {
+  const calls: string[] = [];
+  const api = {
+    completeUpload: async (
+      appId: string,
+      uploadId: string,
+      data: { sha256: string },
+    ) => {
+      calls.push("complete");
+      assert.equal(appId, "app-1");
+      assert.equal(uploadId, "up-1");
+      assert.equal(data.sha256, "b".repeat(64));
+      return { uploadId, status: "UPLOADED", sizeBytes: 489 };
+    },
+    triggerDeploy: async (data: {
+      appId: string;
+      source?: { type: string; uploadId?: string };
+    }) => {
+      calls.push("deploy");
+      assert.equal(data.appId, "app-1");
+      assert.deepEqual(data.source, { type: "UPLOAD", uploadId: "up-1" });
+      return { id: "dep-1", buildStatus: "PENDING" };
+    },
+  } as Partial<DooorApiClient>;
+  const server = createServer(api as DooorApiClient, {
+    localFilesystemAccess: false,
+  });
+  const client = new Client(
+    { name: "dooor-mcp-upload-finalize-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "deploy_app_upload_finalize",
+      arguments: { appId: "app-1", uploadId: "up-1", sha256: "b".repeat(64) },
+    });
+    const text = (
+      response as { content: Array<{ type: string; text?: string }> }
+    ).content.find((item) => item.type === "text")?.text;
+    const parsed = JSON.parse(text ?? "{}");
+    assert.deepEqual(calls, ["complete", "deploy"]);
+    assert.equal(parsed.upload.status, "UPLOADED");
+    assert.equal(parsed.deployment.id, "dep-1");
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
 test("hosted registry exposes only product tools advertised by the workspace", async () => {
   const enabledProductTools = enabledProductToolsFrom({
     products: [

@@ -650,7 +650,7 @@ export function createServer(
 
   server.tool(
     "set_app_source",
-    "Configure or replace the App's persistent source. Use type=GIT for git-connected apps, type=IMAGE for pre-built registry images. Type=UPLOAD only signals intent; actual tarballs ship via deploy_app_from_directory.",
+    "Configure or replace the App's persistent source. Use type=GIT for git-connected apps, type=IMAGE for pre-built registry images. Type=UPLOAD only signals intent; actual tarballs ship via deploy_app_from_directory (local MCP) or the deploy_app_upload_init/deploy_app_upload_finalize pair (hosted MCP).",
     {
       appId: z.string().describe("App ID"),
       type: z.enum(["GIT", "UPLOAD", "IMAGE"]).describe("Source type"),
@@ -794,6 +794,76 @@ export function createServer(
       },
     );
   }
+
+  server.tool(
+    "deploy_app_upload_init",
+    "Step 1 of 2 to deploy a LOCAL project directory when deploy_app_from_directory is NOT in this server's tool list (hosted MCP without filesystem access). YOU (the calling agent) prepare the tarball on the user's machine. Before calling: (1) create a .tar.gz of the project root with the Dockerfile at the archive root, excluding .git, node_modules, dist, .next, *.log and every .env* file (secrets must never ship in the tarball; the app reads them from env vars set via set_env_vars); (2) compute its exact byte size and hex SHA-256. Then call this tool and follow the returned nextSteps: PUT the tarball bytes to presignedPutUrl, then call deploy_app_upload_finalize. When deploy_app_from_directory IS available, prefer it instead.",
+    {
+      appId: z.string().describe("App ID to deploy"),
+      sizeBytes: z
+        .number()
+        .int()
+        .positive()
+        .describe("Exact byte size of the .tar.gz"),
+      sha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/i)
+        .describe("Hex SHA-256 of the .tar.gz"),
+    },
+    async ({ appId, sizeBytes, sha256 }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(async () => {
+            const init = await api.initUpload(appId, { sizeBytes, sha256 });
+            return {
+              ...init,
+              nextSteps: [
+                `1. PUT the tarball bytes to presignedPutUrl before ${init.expiresAt}, sending exactly the returned headers and the raw file as body (e.g. curl -X PUT <headers> --data-binary @app.tar.gz '<presignedPutUrl>'). No Dooor API key on this PUT; the URL itself authorizes it.`,
+                `2. Call deploy_app_upload_finalize with { appId: "${appId}", uploadId: "${init.uploadId}", sha256: "${sha256}" } to verify the upload and trigger the deployment.`,
+              ],
+            };
+          }),
+        },
+      ],
+    }),
+  );
+
+  server.tool(
+    "deploy_app_upload_finalize",
+    "Step 2 of 2 of the hosted upload deploy: after the tarball was PUT to the presigned URL from deploy_app_upload_init, verifies the upload (SHA-256 must match) and triggers the deployment from it. Returns the created deployment; poll get_deployment until buildStatus and deployStatus reach ACTIVE or FAILED.",
+    {
+      appId: z.string().describe("App ID to deploy"),
+      uploadId: z
+        .string()
+        .describe("uploadId returned by deploy_app_upload_init"),
+      sha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/i)
+        .describe("Hex SHA-256 of the uploaded .tar.gz (same value passed to init)"),
+      triggerType: z
+        .enum(["MANUAL", "WEBHOOK", "ROLLBACK", "AUTO_DEPLOY", "ENV_CHANGE"])
+        .optional(),
+    },
+    async ({ appId, uploadId, sha256, triggerType }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(async () => {
+            const upload = await api.completeUpload(appId, uploadId, {
+              sha256,
+            });
+            const deployment = await api.triggerDeploy({
+              appId,
+              triggerType,
+              source: { type: "UPLOAD", uploadId },
+            } as any);
+            return { upload, deployment };
+          }),
+        },
+      ],
+    }),
+  );
 
   server.tool(
     "deploy_app_from_image",
