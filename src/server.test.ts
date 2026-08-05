@@ -306,6 +306,25 @@ test("MCP instructions make provider freshness authoritative", async () => {
   assert.match(description("data_ask"), /use data_sources instead/i);
 });
 
+test("MCP instructions require evidence-based readiness before deployment", async () => {
+  const instructions = await getServerInstructions({
+    localFilesystemAccess: false,
+  });
+
+  assert.match(
+    instructions,
+    /review, prepare, validate, or fix an app for deployment does not authorize a deployment/i,
+  );
+  assert.match(instructions, /exact source revision or artifact/i);
+  assert.match(instructions, /deployment root and build context/i);
+  assert.match(instructions, /typecheck, lint, tests, production build/i);
+  assert.match(instructions, /build-time variables from runtime variables/i);
+  assert.match(instructions, /literal output of failed checks/i);
+  assert.match(instructions, /READY, WARN, or BLOCKED/i);
+  assert.match(instructions, /Never deploy a BLOCKED result/i);
+  assert.match(instructions, /do not claim READY/i);
+});
+
 test("hosted registry fails closed when no product tools are advertised", async () => {
   const tools = await listToolNames({
     localFilesystemAccess: false,

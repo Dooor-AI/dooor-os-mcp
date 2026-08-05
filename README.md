@@ -38,6 +38,12 @@ freshness only.
 * `lake_code_*`: search or page through indexed business-rule source code, only
   when the active product advertises them.
 
+### Deploy readiness contract
+
+The server instructions treat readiness review and deployment as separate operations. Requests to inspect, review, prepare, validate, or fix an app do not authorize a deployment. Before using a deployment tool, the connected agent is instructed to review the exact revision or artifact, verify the build and runtime contract, classify the result as `READY`, `WARN`, or `BLOCKED`, and report the commands and evidence used. A `BLOCKED` result must not be deployed, while a `WARN` result requires explicit acknowledgement of the remaining risks.
+
+The instructions guide the connected agent, but they do not give the hosted MCP direct access to files on the user's machine. When the repository is available in the Claude Code workspace, Claude performs the source inspection and local checks with its own filesystem and shell tools. The Dooor deployment tools remain responsible for platform operations after explicit user authorization.
+
 ### Data freshness contract
 
 For replicated sources, call `data_sources` during the current investigation
