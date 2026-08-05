@@ -295,6 +295,12 @@ export function createServer(
     "test activity, or request and application logs. If data_sources exposes no field explicitly labeled " +
     "as freshness, report freshness as unknown. State the observed timestamp and age; call a source stale " +
     "or failed only when authoritative freshness metadata and the expected cadence support that conclusion.";
+  const deployReadinessInstructions = [
+    "Treat deploy readiness and deployment as separate operations. A request to inspect, review, prepare, validate, or fix an app for deployment does not authorize a deployment or any other Dooor OS mutation. Only call a deployment tool after the user explicitly asks to deploy.",
+    "Before any deployment, review the exact source revision or artifact that will be deployed. When the source repository is available in the current client workspace, inspect it and verify the deployment root and build context, Dockerfile or supported builder configuration, lockfile-based dependency installation, typecheck, lint, tests, production build, production start command, 0.0.0.0 binding, PORT handling, and health endpoint where applicable. For monorepos, confirm that workspace files and shared packages required by the build are included in the selected build context.",
+    "Enumerate required environment variables and distinguish build-time variables from runtime variables. Never ship .env files or secrets, expose private values to browser code, or accept localhost, loopback, test, or development service defaults for a production deployment. Check database migration requirements, production-only runtime dependencies, accidental credential exposure, and relevant dependency security advisories. Do not apply destructive or forced dependency upgrades without evidence and user authorization.",
+    "Read and report the literal output of failed checks before diagnosing them. If the user authorized fixes, make the smallest source changes needed and rerun every affected check. End the readiness review with READY, WARN, or BLOCKED, including the exact commands run, evidence, remaining risks, required environment variables, and the exact revision or artifact reviewed. Never deploy a BLOCKED result; deploy a WARN result only after the user explicitly acknowledges the remaining risks. If the exact source cannot be inspected, say that readiness is incomplete and do not claim READY.",
+  ].join("\n\n");
   const server = new McpServer(
     {
       name: "dooor-os",
@@ -314,6 +320,7 @@ export function createServer(
         "For live operational connections, call data_connections, then data_connection_capabilities, then " +
         "data_connection_read with an advertised list/get operation. Fixed source filters are authoritative, " +
         "credentials are never returned and source writes are unavailable.\n\n" +
+        `${deployReadinessInstructions}\n\n` +
         "Platform tools can mutate Dooor OS resources. Use them only when the user explicitly requests that " +
         "operation. For a deployed app, use a dedicated least-privilege workspace API key and the REST API " +
         "described by integration_guide. Never hardcode a key or expose it to browser code.",
