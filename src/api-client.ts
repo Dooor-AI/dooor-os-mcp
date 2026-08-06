@@ -132,6 +132,9 @@ export class DooorApiClient {
   private post<T = unknown>(path: string, body?: unknown) {
     return this.request<T>("POST", path, body);
   }
+  private put<T = unknown>(path: string, body?: unknown) {
+    return this.request<T>("PUT", path, body);
+  }
   private patch<T = unknown>(path: string, body?: unknown) {
     return this.request<T>("PATCH", path, body);
   }
@@ -330,6 +333,18 @@ export class DooorApiClient {
 
   getPipelineState(appId: string) {
     return this.get(this.ws(`/apps/${appId}/pipeline-state`));
+  }
+
+  getAppPlatformDomain(appId: string) {
+    return this.get(this.ws(`/apps/${appId}/platform-domain`));
+  }
+
+  setAppPlatformDomain(appId: string, subdomain: string) {
+    return this.put(this.ws(`/apps/${appId}/platform-domain`), { subdomain });
+  }
+
+  removeAppPlatformDomain(appId: string) {
+    return this.del(this.ws(`/apps/${appId}/platform-domain`));
   }
 
   // -------------------------------------------------------------------------

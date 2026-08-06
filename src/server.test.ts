@@ -117,6 +117,54 @@ test("hosted mode registers the agent-driven upload deploy pair", async () => {
   assert.equal(tools.includes("deploy_app_upload_finalize"), true);
 });
 
+test("registers managed platform domain tools in hosted mode", async () => {
+  const tools = await listToolNames({ localFilesystemAccess: false });
+
+  assert.equal(tools.includes("get_app_platform_domain"), true);
+  assert.equal(tools.includes("set_app_platform_domain"), true);
+  assert.equal(tools.includes("remove_app_platform_domain"), true);
+});
+
+test("set_app_platform_domain forwards the app id and label", async () => {
+  const api = {
+    setAppPlatformDomain: async (appId: string, subdomain: string) => {
+      assert.equal(appId, "app-1");
+      assert.equal(subdomain, "finance-copilot");
+      return {
+        domain: "finance-copilot.apps.dooor.ai",
+        status: "TLS_ISSUING",
+        dnsRequired: false,
+      };
+    },
+  } as Partial<DooorApiClient>;
+  const server = createServer(api as DooorApiClient, {
+    localFilesystemAccess: false,
+  });
+  const client = new Client(
+    { name: "dooor-mcp-platform-domain-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "set_app_platform_domain",
+      arguments: { appId: "app-1", subdomain: "finance-copilot" },
+    });
+    const text = (
+      response as { content: Array<{ type: string; text?: string }> }
+    ).content.find((item) => item.type === "text")?.text;
+    const parsed = JSON.parse(text ?? "{}");
+    assert.equal(parsed.domain, "finance-copilot.apps.dooor.ai");
+    assert.equal(parsed.status, "TLS_ISSUING");
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
 test("upload init returns the presigned slot plus next steps for the agent", async () => {
   const api = {
     initUpload: async (appId: string, data: { sizeBytes: number; sha256?: string }) => {

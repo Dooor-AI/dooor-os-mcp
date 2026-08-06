@@ -28,6 +28,9 @@ const TOOL_FAMILIES = [
     family: "platform",
     tools: [
       "list_apps",
+      "get_app_platform_domain",
+      "set_app_platform_domain",
+      "remove_app_platform_domain",
       "deploy_app",
       "list_deployments",
       "list_databases",
@@ -301,6 +304,7 @@ export function createServer(
     "Enumerate required environment variables and distinguish build-time variables from runtime variables. Never ship .env files or secrets, expose private values to browser code, or accept localhost, loopback, test, or development service defaults for a production deployment. Check database migration requirements, production-only runtime dependencies, accidental credential exposure, and relevant dependency security advisories. Do not apply destructive or forced dependency upgrades without evidence and user authorization.",
     "Read and report the literal output of failed checks before diagnosing them. If the user authorized fixes, make the smallest source changes needed and rerun every affected check. End the readiness review with READY, WARN, or BLOCKED, including the exact commands run, evidence, remaining risks, required environment variables, and the exact revision or artifact reviewed. Never deploy a BLOCKED result; deploy a WARN result only after the user explicitly acknowledges the remaining risks. If the exact source cannot be inspected, say that readiness is incomplete and do not claim READY.",
   ].join("\n\n");
+  const platformDomainInstructions = "When the user explicitly asks for a shorter managed URL under apps.dooor.ai, use get_app_platform_domain to inspect the current reservation and set_app_platform_domain to reserve and route the requested globally unique label. Managed platform domains use wildcard DNS and do not require customer DNS records. A successful mutation can initially return TLS_ISSUING; poll get_app_platform_domain until ACTIVE before declaring the HTTPS URL ready. Use remove_app_platform_domain only after explicit confirmation because it releases the globally unique label.";
   const server = new McpServer(
     {
       name: "dooor-os",
@@ -321,6 +325,7 @@ export function createServer(
         "data_connection_read with an advertised list/get operation. Fixed source filters are authoritative, " +
         "credentials are never returned and source writes are unavailable.\n\n" +
         `${deployReadinessInstructions}\n\n` +
+        `${platformDomainInstructions}\n\n` +
         "Platform tools can mutate Dooor OS resources. Use them only when the user explicitly requests that " +
         "operation. For a deployed app, use a dedicated least-privilege workspace API key and the REST API " +
         "described by integration_guide. Never hardcode a key or expose it to browser code.",
@@ -624,6 +629,59 @@ export function createServer(
     },
     async ({ appId }) => ({
       content: [{ type: "text" as const, text: await call(() => api.getPipelineState(appId)) }],
+    }),
+  );
+
+  server.tool(
+    "get_app_platform_domain",
+    "Get the app's managed platform alias under apps.dooor.ai, including TLS status. This is read-only.",
+    {
+      appId: z.string().describe("App ID"),
+    },
+    async ({ appId }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.getAppPlatformDomain(appId)),
+        },
+      ],
+    }),
+  );
+
+  server.tool(
+    "set_app_platform_domain",
+    "Reserve and route a globally unique managed alias such as finance-copilot.apps.dooor.ai. No customer DNS change is required. This mutates platform routing and requires apps:write.",
+    {
+      appId: z.string().describe("App ID"),
+      subdomain: z
+        .string()
+        .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/)
+        .max(63)
+        .describe("Label only, without .apps.dooor.ai, for example finance-copilot"),
+    },
+    async ({ appId, subdomain }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.setAppPlatformDomain(appId, subdomain)),
+        },
+      ],
+    }),
+  );
+
+  server.tool(
+    "remove_app_platform_domain",
+    "Release the app's managed apps.dooor.ai alias and remove its route. The generated tenant-scoped URL remains available. This mutation requires explicit user confirmation and apps:write.",
+    {
+      appId: z.string().describe("App ID"),
+    },
+    async ({ appId }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => api.removeAppPlatformDomain(appId)),
+        },
+      ],
     }),
   );
 

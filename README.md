@@ -44,6 +44,10 @@ The server instructions treat readiness review and deployment as separate operat
 
 The instructions guide the connected agent, but they do not give the hosted MCP direct access to files on the user's machine. When the repository is available in the Claude Code workspace, Claude performs the source inspection and local checks with its own filesystem and shell tools. The Dooor deployment tools remain responsible for platform operations after explicit user authorization.
 
+### Managed platform domains
+
+Use `get_app_platform_domain` to inspect an app's current short alias, `set_app_platform_domain` to reserve and route a globally unique label such as `finance-copilot.apps.dooor.ai`, and `remove_app_platform_domain` to release it. Managed aliases use the platform wildcard DNS, require no customer DNS records, preserve the generated tenant-scoped URL, and can briefly report `TLS_ISSUING` while cert-manager issues HTTPS. Setting and removing aliases require `apps:write`; reading requires `apps:read`.
+
 ### Data freshness contract
 
 For replicated sources, call `data_sources` during the current investigation
