@@ -165,6 +165,81 @@ test("set_app_platform_domain forwards the app id and label", async () => {
   }
 });
 
+test("registers the harbor observability tool", async () => {
+  const tools = await listToolNames({ localFilesystemAccess: false });
+
+  assert.equal(tools.includes("harbor_observability"), true);
+});
+
+test("harbor_observability routes each view to its own endpoint", async () => {
+  const chamadas: string[] = [];
+  const api = {
+    getHarborSummary: async (appId: string) => {
+      chamadas.push(`summary:${appId}`);
+      return { calls: 12 };
+    },
+    listHarborTraces: async (
+      appId: string,
+      params?: { limit?: number; sessionId?: string },
+    ) => {
+      chamadas.push(`traces:${appId}:${params?.limit}:${params?.sessionId}`);
+      return { traces: [] };
+    },
+    listHarborGuardBlocks: async (
+      appId: string,
+      params?: { guardType?: string },
+    ) => {
+      chamadas.push(`guards:${appId}:${params?.guardType}`);
+      return { blocks: [] };
+    },
+    getHarborTrace: async (appId: string, traceId: string) => {
+      chamadas.push(`trace:${appId}:${traceId}`);
+      return { id: traceId };
+    },
+  } as Partial<DooorApiClient>;
+  const server = createServer(api as DooorApiClient, {
+    localFilesystemAccess: false,
+  });
+  const client = new Client(
+    { name: "dooor-mcp-harbor-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    await client.callTool({
+      name: "harbor_observability",
+      arguments: { appId: "app-1", view: "summary" },
+    });
+    await client.callTool({
+      name: "harbor_observability",
+      arguments: { appId: "app-1", view: "traces", limit: 5, sessionId: "s-9" },
+    });
+    await client.callTool({
+      name: "harbor_observability",
+      arguments: { appId: "app-1", view: "guard_blocks", guardType: "pii" },
+    });
+    // traceId em view=traces busca UM trace, não a lista
+    await client.callTool({
+      name: "harbor_observability",
+      arguments: { appId: "app-1", view: "traces", traceId: "t-7" },
+    });
+
+    assert.deepEqual(chamadas, [
+      "summary:app-1",
+      "traces:app-1:5:s-9",
+      "guards:app-1:pii",
+      "trace:app-1:t-7",
+    ]);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
 test("upload init returns the presigned slot plus next steps for the agent", async () => {
   const api = {
     initUpload: async (appId: string, data: { sizeBytes: number; sha256?: string }) => {

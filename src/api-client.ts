@@ -695,6 +695,69 @@ export class DooorApiClient {
   }
 
   // -------------------------------------------------------------------------
+  // Harbor (AI governance: traces, guard blocks, evals, token usage)
+  //
+  // Read-only. Every endpoint is workspace- and app-scoped by the backend and
+  // needs the `harbor:read` key scope; a key without it gets 403 before any
+  // data is read.
+  // -------------------------------------------------------------------------
+
+  private harbor(appId: string, path: string, params: Record<string, unknown> = {}) {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return this.get(this.ws(`/harbor/apps/${appId}${path}${q ? `?${q}` : ""}`));
+  }
+
+  /** Aggregate counters for a window: calls, tokens, latency, guard blocks. */
+  getHarborSummary(appId: string, start?: string, end?: string) {
+    return this.harbor(appId, "/analytics/summary", { start, end });
+  }
+
+  /** Token consumption per model over a window — the basis for AI cost. */
+  getHarborTokenUsage(appId: string, start?: string, end?: string) {
+    return this.harbor(appId, "/analytics/token-usage", { start, end });
+  }
+
+  /** One row per AI call: model, tokens, latency, input/output. */
+  listHarborTraces(
+    appId: string,
+    params?: { limit?: number; offset?: number; sessionId?: string },
+  ) {
+    return this.harbor(appId, "/traces", {
+      limit: params?.limit,
+      offset: params?.offset,
+      session_id: params?.sessionId,
+    });
+  }
+
+  getHarborTrace(appId: string, traceId: string) {
+    return this.harbor(appId, `/traces/${traceId}`);
+  }
+
+  /** Calls a guardrail refused — the evidence that governance is active. */
+  listHarborGuardBlocks(
+    appId: string,
+    params?: { limit?: number; offset?: number; guardType?: string; guardName?: string },
+  ) {
+    return this.harbor(appId, "/guard-blocks", {
+      limit: params?.limit,
+      offset: params?.offset,
+      guard_type: params?.guardType,
+      guard_name: params?.guardName,
+    });
+  }
+
+  listHarborEvals(appId: string, params?: { limit?: number; offset?: number }) {
+    return this.harbor(appId, "/evals", {
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // API Keys
   // -------------------------------------------------------------------------
 
