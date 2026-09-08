@@ -1554,6 +1554,68 @@ export function createServer(
     }),
   );
 
+  // One tool with a `view` discriminator instead of five separate ones: the
+  // five Harbor reads share the same app scope and are almost always used
+  // together ("what did the AI do, and did a guardrail stop anything?"), and
+  // the tool list is already long enough to cost context on every call.
+  server.tool(
+    "harbor_observability",
+    "Read the AI governance data (Harbor) for an app: traces of every AI call, " +
+      "guardrail blocks, evaluations and token usage. Use view='summary' first to " +
+      "see the shape of the window, then view='traces' or view='guard_blocks' to " +
+      "inspect individual calls. Read-only; requires the harbor:read scope.",
+    {
+      appId: z.string().describe("App ID"),
+      view: z
+        .enum(["summary", "traces", "guard_blocks", "evals", "token_usage"])
+        .describe(
+          "summary: aggregate counters | traces: one row per AI call | " +
+            "guard_blocks: calls a guardrail refused | evals: evaluation scores | " +
+            "token_usage: consumption per model",
+        ),
+      limit: z.number().optional().describe("Max rows (traces, guard_blocks, evals)"),
+      offset: z.number().optional().describe("Pagination offset"),
+      sessionId: z.string().optional().describe("Filter traces by conversation/session"),
+      guardType: z.string().optional().describe("Filter guard_blocks by guard type"),
+      guardName: z.string().optional().describe("Filter guard_blocks by guard name"),
+      start: z
+        .string()
+        .optional()
+        .describe("Window start, ISO-8601 (summary and token_usage)"),
+      end: z.string().optional().describe("Window end, ISO-8601 (summary and token_usage)"),
+      traceId: z.string().optional().describe("With view='traces', fetch this single trace"),
+    },
+    async ({ appId, view, limit, offset, sessionId, guardType, guardName, start, end, traceId }) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: await call(() => {
+            switch (view) {
+              case "summary":
+                return api.getHarborSummary(appId, start, end);
+              case "token_usage":
+                return api.getHarborTokenUsage(appId, start, end);
+              case "guard_blocks":
+                return api.listHarborGuardBlocks(appId, {
+                  limit,
+                  offset,
+                  guardType,
+                  guardName,
+                });
+              case "evals":
+                return api.listHarborEvals(appId, { limit, offset });
+              case "traces":
+              default:
+                return traceId
+                  ? api.getHarborTrace(appId, traceId)
+                  : api.listHarborTraces(appId, { limit, offset, sessionId });
+            }
+          }),
+        },
+      ],
+    }),
+  );
+
   server.tool(
     "get_workspace_overview",
     "Get a high-level overview of the workspace: total apps, deploys today, health summary, costs.",

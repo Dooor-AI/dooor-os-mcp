@@ -23,6 +23,9 @@ freshness only.
 * `capabilities`: workspace whoami, scopes, family map and source probes.
 * Platform tools: apps, deploys, git repos, env vars, databases, agents and
   monitoring.
+* `harbor_observability`: AI governance data for an app — traces of every AI
+  call, guardrail blocks, evaluations and token usage. Read-only; needs the
+  `harbor:read` scope. Pick the slice with `view`.
 * `data_products`: discover which data products and capabilities are enabled
   for the active workspace.
 * `data_*`: business questions over the connected operational sources exposed
