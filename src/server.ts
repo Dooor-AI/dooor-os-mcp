@@ -77,8 +77,9 @@ const TOOL_FAMILIES = [
   },
   {
     family: "lake_code",
-    tools: ["lake_code_search", "lake_code_list"],
-    useFor: "Search or page through business-rule source code advertised by the active workspace product.",
+    tools: ["lake_code_search", "lake_code_list", "lake_code_files", "lake_code_file", "lake_code_grep"],
+    useFor:
+      "Search, grep, list and read whole business-rule source files (application code and database routines) advertised by the active workspace product.",
     readOnly: true,
   },
 ] as const;
@@ -1987,6 +1988,52 @@ export function createServer(
       },
       async ({ query, topK }) => ({
         content: [{ type: "text" as const, text: await call(() => api.lakeCodeSearch(query, topK)) }],
+      }),
+    );
+  }
+
+  if (productToolEnabled("lake_code_files")) {
+    server.tool(
+      "lake_code_files",
+      "List the indexed source files (application classes and database routines) whose path contains a fragment. Returns { files: [{ file, chunks }], count }. Use it to find the exact path for lake_code_file. Read-only.",
+      {
+        match: z
+          .string()
+          .optional()
+          .describe("Path fragment to filter by, case-insensitive (e.g. a class or routine name). Empty lists everything."),
+        limit: z.number().optional().describe("Max files to return (default 100, max 1000)"),
+      },
+      async ({ match, limit }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCodeFiles(match, limit)) }],
+      }),
+    );
+  }
+
+  if (productToolEnabled("lake_code_file")) {
+    server.tool(
+      "lake_code_file",
+      "Read a whole indexed source file by its exact path, in line windows of up to 800 lines. Returns { file, lang, totalLines, fromLine, toLine, nextFromLine, content }. Call again with fromLine = nextFromLine to continue. Read-only.",
+      {
+        path: z.string().describe("Exact file path as returned by lake_code_files or lake_code_search"),
+        fromLine: z.number().optional().describe("First line to return (default 1)"),
+        maxLines: z.number().optional().describe("Max lines to return (default and max 800)"),
+      },
+      async ({ path, fromLine, maxLines }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCodeFile(path, fromLine, maxLines)) }],
+      }),
+    );
+  }
+
+  if (productToolEnabled("lake_code_grep")) {
+    server.tool(
+      "lake_code_grep",
+      "Exact, case-insensitive text search over the indexed source code (class, function, routine, table or column names). Returns { hits: [{ file, line, text }], count }. Prefer it over lake_code_search when you know the identifier. Read-only.",
+      {
+        text: z.string().describe("Literal text to find (at least 2 characters)"),
+        limit: z.number().optional().describe("Max hits (default 50, max 200)"),
+      },
+      async ({ text, limit }) => ({
+        content: [{ type: "text" as const, text: await call(() => api.lakeCodeGrep(text, limit)) }],
       }),
     );
   }
