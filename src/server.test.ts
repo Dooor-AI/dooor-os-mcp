@@ -687,3 +687,69 @@ test("lake_sources is bounded by default and supports the compact summary", asyn
     await Promise.allSettled([client.close(), server.close()]);
   }
 });
+
+test("code tools for whole files and exact search follow the advertised product tools", async () => {
+  const advertised = await listToolNames({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set([
+      "lake_code_search",
+      "lake_code_files",
+      "lake_code_file",
+      "lake_code_grep",
+    ]),
+  });
+  for (const name of ["lake_code_files", "lake_code_file", "lake_code_grep"]) {
+    assert.equal(advertised.includes(name), true, name);
+  }
+  assert.equal(advertised.includes("lake_code_list"), false);
+
+  const notAdvertised = await listToolNames({
+    localFilesystemAccess: false,
+    enabledProductTools: new Set(["lake_code_search"]),
+  });
+  for (const name of ["lake_code_files", "lake_code_file", "lake_code_grep"]) {
+    assert.equal(notAdvertised.includes(name), false, name);
+  }
+});
+
+test("lake_code_file and lake_code_grep call the read-only code routes", async () => {
+  const calls: string[] = [];
+  const api = {
+    lakeCodeFile: async (path: string, fromLine?: number, maxLines?: number) => {
+      calls.push(`file:${path}:${fromLine}:${maxLines}`);
+      return { content: "x" };
+    },
+    lakeCodeGrep: async (text: string, limit?: number) => {
+      calls.push(`grep:${text}:${limit}`);
+      return { hits: [] };
+    },
+  } as unknown as DooorApiClient;
+  const server = createServer(api, {
+    localFilesystemAccess: false,
+    enabledProductTools: new Set(["lake_code_file", "lake_code_grep"]),
+  });
+  const client = new Client(
+    { name: "dooor-mcp-code-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    await client.callTool({
+      name: "lake_code_file",
+      arguments: { path: "src/A.php", fromLine: 10, maxLines: 20 },
+    });
+    await client.callTool({
+      name: "lake_code_grep",
+      arguments: { text: "LocationOnline", limit: 5 },
+    });
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+  assert.deepEqual(calls, [
+    "file:src/A.php:10:20",
+    "grep:LocationOnline:5",
+  ]);
+});

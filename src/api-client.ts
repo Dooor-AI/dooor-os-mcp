@@ -280,6 +280,23 @@ export class DooorApiClient {
   dataSql(sql: string) {
     return this.post(this.ws("/data/sql"), { sql });
   }
+  lakeCodeFiles(match?: string, limit?: number) {
+    const qs = new URLSearchParams();
+    if (match) qs.set("match", match);
+    if (limit != null) qs.set("limit", String(limit));
+    return this.get(this.ws(`/data/oltp/code/files?${qs.toString()}`));
+  }
+  lakeCodeFile(path: string, fromLine?: number, maxLines?: number) {
+    const qs = new URLSearchParams({ path });
+    if (fromLine != null) qs.set("fromLine", String(fromLine));
+    if (maxLines != null) qs.set("maxLines", String(maxLines));
+    return this.get(this.ws(`/data/oltp/code/file?${qs.toString()}`));
+  }
+  lakeCodeGrep(text: string, limit?: number) {
+    const qs = new URLSearchParams({ text });
+    if (limit != null) qs.set("limit", String(limit));
+    return this.get(this.ws(`/data/oltp/code/grep?${qs.toString()}`));
+  }
   lakeCodeList(limit?: number, offset?: string | number) {
     const qs = new URLSearchParams();
     if (limit != null) qs.set("limit", String(limit));
