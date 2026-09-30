@@ -1,0 +1,76 @@
+name: Security (SAST + secrets)
+
+# Análise estática (Semgrep, regras públicas p/ci + linguagem) e varredura de segredos (Gitleaks)
+# em todo push e pull request. Roda ao lado do ci.yml sem alterá-lo.
+# Evidência do controle de desenvolvimento seguro (SOC 2 / ISO 27001 A.8.25 e A.8.28).
+#
+# Gitleaks bloqueia (exit 1) quando encontra segredo nos commits novos do push/PR.
+# Semgrep é informativo nesta primeira fase: publica o relatório como artifact e no resumo do job;
+# passa a bloquear (--error) quando os achados existentes forem tratados.
+
+on:
+  push:
+    branches: [main, master, develop, staging]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gitleaks over the new commits of this push or PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            RANGE="$HEAD_SHA~20..$HEAD_SHA"
+          else
+            RANGE="$BASE_SHA..$HEAD_SHA"
+          fi
+          echo "Scanning range $RANGE"
+          docker run --rm -v "$PWD:/repo:ro" -w /repo zricethezav/gitleaks:v8.30.1 \
+            git --redact --no-banner --exit-code 1 --log-opts="$RANGE" /repo
+
+  sast:
+    name: Static analysis (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.176.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Semgrep scan (p/ci + p/typescript + p/nodejs + p/secrets)
+        run: |
+          semgrep scan --config p/ci --config p/typescript --config p/nodejs --config p/secrets \
+            --metrics=off --exclude node_modules --exclude dist --exclude .next --exclude coverage \
+            --exclude '*.spec.ts' --exclude '*.test.ts' \
+            --json --output semgrep.json --text --text-output semgrep.txt || true
+          COUNT=$(python3 -c "import json;print(len(json.load(open('semgrep.json'))['results']))" 2>/dev/null || echo "?")
+          echo "Semgrep findings: $COUNT" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          import json, collections
+          r = json.load(open('semgrep.json'))['results']
+          c = collections.Counter(x['check_id'] for x in r)
+          for k, v in c.most_common():
+              print(f"- {v}x `{k}`")
+          EOF
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-${{ github.run_id }}
+          path: |
+            semgrep.json
+            semgrep.txt
+          retention-days: 400
